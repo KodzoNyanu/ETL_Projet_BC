@@ -1,0 +1,5 @@
+al_etl_extension/.alpackages/
+al_etl_extension/*.app
+al_etl_extension/.vs/
+*.bak
+*.tmp

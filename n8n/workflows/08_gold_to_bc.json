@@ -1,0 +1,187 @@
+{
+  "id": "wf08-gold-to-bc-v2",
+  "name": "08 - Gold → BC | Orchestrateur (Hybride)",
+  "active": true,
+  "nodes": [
+
+    {
+      "id": "wf08-webhook-001",
+      "name": "Webhook BC Dashboard",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [100, 200],
+      "webhookId": "run-gold-to-bc",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "run-gold-to-bc",
+        "responseMode": "onReceived",
+        "options": {
+          "responseData": "{\"status\":\"sync started\",\"message\":\"Gold → BC synchronisation lancée en arrière-plan\"}",
+          "responseCode": 200
+        }
+      }
+    },
+
+    {
+      "id": "wf08-schedule-001",
+      "name": "Schedule 09h00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [100, 360],
+      "parameters": {
+        "rule": { "interval": [{ "field": "cronExpression", "expression": "0 9 * * *" }] }
+      }
+    },
+
+    {
+      "id": "wf08-trigger-001",
+      "name": "Déclencheur sous-workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [100, 520],
+      "parameters": {}
+    },
+
+    {
+      "id": "wf08-exec-customers-001",
+      "name": "Execute 08A — Customers",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [380, 360],
+      "parameters": {
+        "workflowId": "wf08a-sync-customers-v1",
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "wf08-exec-articles-001",
+      "name": "Execute 08B — Articles",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [620, 360],
+      "parameters": {
+        "workflowId": "wf08b-sync-articles-v1",
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "wf08-exec-headers-001",
+      "name": "Execute 08C — Shipment Headers",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [860, 360],
+      "parameters": {
+        "workflowId": "wf08c-sync-headers-v1",
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "wf08-exec-distances-001",
+      "name": "Execute 08D — Distances",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1100, 360],
+      "parameters": {
+        "workflowId": "wf08d-sync-distances-v1",
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "wf08-exec-shiplines-001",
+      "name": "Execute 08E — Shipment Lines",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1340, 360],
+      "parameters": {
+        "workflowId": "wf08e-sync-shiplines-v1",
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "wf08-exec-ecomlines-001",
+      "name": "Execute 08F — Ecommerce Lines",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [1580, 360],
+      "parameters": {
+        "workflowId": "wf08f-sync-ecomlines-v1",
+        "waitForSubWorkflow": true,
+        "options": {}
+      }
+    },
+
+    {
+      "id": "wf08-merge-001",
+      "name": "Fusionner résultats",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 2.1,
+      "position": [1820, 360],
+      "parameters": {
+        "mode": "append"
+      }
+    },
+
+    {
+      "id": "wf08-summary-001",
+      "name": "Résumé sync BC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2060, 360],
+      "parameters": {
+        "jsCode": "const tables = $input.all().map(i => i.json).filter(Boolean);\nconst total_inserted = tables.reduce((s,t) => s + (t.inserted || 0), 0);\nconst total_updated  = tables.reduce((s,t) => s + (t.updated  || 0), 0);\nconst total_errors   = tables.reduce((s,t) => s + (t.errors   || 0), 0);\nconst status = total_errors === 0 ? 'success' : 'partial';\nconsole.log(`[WF-08] ✅ Sync Gold → BC terminé: ${total_inserted} inserts | ${total_updated} updates | ${total_errors} errors`);\nreturn [{ json: { status, tables, total_inserted, total_updated, total_errors, completedAt: new Date().toISOString() } }];"
+      }
+    }
+
+  ],
+  "connections": {
+    "Webhook BC Dashboard": {
+      "main": [[{ "node": "Execute 08A — Customers", "type": "main", "index": 0 }]]
+    },
+    "Schedule 09h00": {
+      "main": [[{ "node": "Execute 08A — Customers", "type": "main", "index": 0 }]]
+    },
+    "Déclencheur sous-workflow": {
+      "main": [[{ "node": "Execute 08A — Customers", "type": "main", "index": 0 }]]
+    },
+    "Execute 08A — Customers": {
+      "main": [[{ "node": "Execute 08B — Articles", "type": "main", "index": 0 }]]
+    },
+    "Execute 08B — Articles": {
+      "main": [[{ "node": "Execute 08C — Shipment Headers", "type": "main", "index": 0 }]]
+    },
+    "Execute 08C — Shipment Headers": {
+      "main": [[{ "node": "Execute 08D — Distances", "type": "main", "index": 0 }]]
+    },
+    "Execute 08D — Distances": {
+      "main": [[{ "node": "Execute 08E — Shipment Lines", "type": "main", "index": 0 }]]
+    },
+    "Execute 08E — Shipment Lines": {
+      "main": [[{ "node": "Execute 08F — Ecommerce Lines", "type": "main", "index": 0 }]]
+    },
+    "Execute 08F — Ecommerce Lines": {
+      "main": [[{ "node": "Fusionner résultats", "type": "main", "index": 0 }]]
+    },
+    "Fusionner résultats": {
+      "main": [[{ "node": "Résumé sync BC", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "a1b2c3d4-e5f6-0008-b002-000000000001",
+  "activeVersionId": "a1b2c3d4-e5f6-0008-b002-000000000001",
+  "versionCounter": 2,
+  "triggerCount": 2,
+  "tags": [{ "name": "gold" }, { "name": "business-central" }, { "name": "orchestrateur" }]
+}

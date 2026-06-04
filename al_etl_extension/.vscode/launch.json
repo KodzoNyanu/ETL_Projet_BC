@@ -1,0 +1,23 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "ETL Pipeline — Publish to BC (CRONUS Suisse SA)",
+      "type": "al",
+      "request": "launch",
+      "environmentType": "OnPrem",
+      "server": "http://10.14.210.119",
+      "serverInstance": "BC260",
+      "port": 7048,
+      "authentication": "Windows",
+      "startupObjectId": 50211,
+      "startupObjectType": "Page",
+      "breakOnError": "All",
+      "launchBrowser": true,
+      "enableLongRunningSqlStatements": true,
+      "enableSqlInformationDebugger": true,
+      "tenant": "default",
+      "schemaUpdateMode": "ForceSync"
+    }
+  ]
+}

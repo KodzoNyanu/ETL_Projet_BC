@@ -1,0 +1,35 @@
+{
+  "id": "wf08f-sync-ecomlines-v1",
+  "name": "08F - Sync fact_ecommerce_lines → BC",
+  "active": true,
+  "nodes": [
+    {
+      "id": "ewt-08f-001",
+      "name": "Déclencheur sous-workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [100, 300],
+      "parameters": {}
+    },
+    {
+      "id": "code-08f-001",
+      "name": "Sync fact_ecommerce_lines → BC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 300],
+      "parameters": {
+        "jsCode": "const { Client } = require('pg');\nconst http = require('http');\n\nconst PG      = { host:'172.18.0.4', port:5432, database:'data_warehouse_gold', user:'nyanu', password:'nyanu', connectionTimeoutMillis:10000 };\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = $vars.BC_COMPANY_ID || '00000000-0000-0000-0000-000000000000';\nconst ENTITY  = 'etlEcommerceLines';\nconst NOW     = new Date().toISOString();\n\nfunction bcReq(method, path, body) {\n  return new Promise((resolve, reject) => {\n    const pl = body ? JSON.stringify(body) : null;\n    const req = http.request({\n      hostname: PROXY, port: PORT,\n      path: `${BASE}/companies(${COMPANY})/${path}`,\n      method,\n      headers: {\n        'Content-Type': 'application/json', 'Accept': 'application/json',\n        ...(pl ? { 'Content-Length': Buffer.byteLength(pl) } : {}),\n        ...(method === 'PATCH' ? { 'If-Match': '*' } : {})\n      }\n    }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve({status:res.statusCode,body:d})); });\n    req.on('error', reject);\n    if (pl) req.write(pl);\n    req.end();\n  });\n}\n\n// Compound key: invoiceNo + lineNo\nasync function upsert(invoiceNo, lineNo, data) {\n  const r = await bcReq('POST', ENTITY, data);\n  if (r.status === 201 || r.status === 200) return { action:'inserted', key:`${invoiceNo}|${lineNo}`, status:r.status };\n  if (r.status === 409 || r.status === 422) {\n    const filter = `invoiceNo eq '${encodeURIComponent(invoiceNo)}' and lineNo eq ${lineNo}`;\n    const lookup = await bcReq('GET', `${ENTITY}?$filter=${filter}&$select=id`);\n    let bcId = null;\n    try { bcId = JSON.parse(lookup.body).value?.[0]?.id; } catch(e) {}\n    if (bcId) {\n      const r2 = await bcReq('PATCH', `${ENTITY}(${bcId})`, data);\n      return { action:'updated', key:`${invoiceNo}|${lineNo}`, status:r2.status };\n    }\n    return { action:'error', key:`${invoiceNo}|${lineNo}`, status:409, detail:'record not found for PATCH' };\n  }\n  return { action:'error', key:`${invoiceNo}|${lineNo}`, status:r.status, detail:r.body.substring(0,200) };\n}\n\nconst client = new Client(PG);\nawait client.connect();\nconst res = await client.query(`\n  SELECT invoice_no, line_no, stock_code, description,\n         quantity, unit_price, total_amount,\n         customer_id, country, invoice_date\n  FROM fact_ecommerce_lines\n  LIMIT 10000\n`);\nawait client.end();\n\nconst results = [];\nfor (const row of res.rows) {\n  const r = await upsert(row.invoice_no, row.line_no, {\n    invoiceNo: row.invoice_no||'',\n    lineNo: parseInt(row.line_no)||0,\n    stockCode: row.stock_code||'',\n    description: row.description||'',\n    quantity: parseFloat(row.quantity)||0,\n    unitPrice: parseFloat(row.unit_price)||0,\n    totalAmount: parseFloat(row.total_amount)||0,\n    customerId: row.customer_id||'',\n    country: row.country||'',\n    invoiceDate: row.invoice_date ? new Date(row.invoice_date).toISOString().split('T')[0] : '',\n    etlLoadedAt: NOW\n  });\n  results.push(r);\n}\nconst inserted = results.filter(r=>r.action==='inserted').length;\nconst updated  = results.filter(r=>r.action==='updated').length;\nconst errors   = results.filter(r=>r.action==='error').length;\nconsole.log(`[WF-08F] fact_ecommerce_lines → BC: ${inserted} inserts | ${updated} updates | ${errors} errors`);\nreturn [{ json: { table:'fact_ecommerce_lines', total:results.length, inserted, updated, errors } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Déclencheur sous-workflow": {
+      "main": [[{ "node": "Sync fact_ecommerce_lines → BC", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null, "meta": null, "pinData": {},
+  "versionId": "a1b2c3d4-0008-000f-b001-000000000001",
+  "activeVersionId": "a1b2c3d4-0008-000f-b001-000000000001",
+  "tags": [{ "name": "gold" }, { "name": "business-central" }, { "name": "sous-workflow" }]
+}

@@ -1,0 +1,35 @@
+{
+  "id": "wf08d-sync-distances-v1",
+  "name": "08D - Sync dim_distances → BC",
+  "active": true,
+  "nodes": [
+    {
+      "id": "ewt-08d-001",
+      "name": "Déclencheur sous-workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [100, 300],
+      "parameters": {}
+    },
+    {
+      "id": "code-08d-001",
+      "name": "Sync dim_distances → BC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [360, 300],
+      "parameters": {
+        "jsCode": "const { Client } = require('pg');\nconst http = require('http');\n\nconst PG      = { host:'172.18.0.4', port:5432, database:'data_warehouse_gold', user:'nyanu', password:'nyanu', connectionTimeoutMillis:10000 };\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = $vars.BC_COMPANY_ID || '00000000-0000-0000-0000-000000000000';\nconst ENTITY  = 'etlDistances';\nconst NOW     = new Date().toISOString();\n\nfunction bcReq(method, path, body) {\n  return new Promise((resolve, reject) => {\n    const pl = body ? JSON.stringify(body) : null;\n    const req = http.request({\n      hostname: PROXY, port: PORT,\n      path: `${BASE}/companies(${COMPANY})/${path}`,\n      method,\n      headers: {\n        'Content-Type': 'application/json', 'Accept': 'application/json',\n        ...(pl ? { 'Content-Length': Buffer.byteLength(pl) } : {}),\n        ...(method === 'PATCH' ? { 'If-Match': '*' } : {})\n      }\n    }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve({status:res.statusCode,body:d})); });\n    req.on('error', reject);\n    if (pl) req.write(pl);\n    req.end();\n  });\n}\n\nasync function upsert(keyVal, data) {\n  const r = await bcReq('POST', ENTITY, data);\n  if (r.status === 201 || r.status === 200) return { action:'inserted', key:keyVal, status:r.status };\n  if (r.status === 409 || r.status === 422) {\n    const r2 = await bcReq('PATCH', `${ENTITY}('${encodeURIComponent(keyVal)}')`, data);\n    return { action:'updated', key:keyVal, status:r2.status };\n  }\n  return { action:'error', key:keyVal, status:r.status, detail:r.body.substring(0,200) };\n}\n\nconst client = new Client(PG);\nawait client.connect();\nconst res = await client.query(`\n  SELECT session_id, session_date,\n         total_distance_km, total_distance_meters,\n         max_speed_kmh, avg_speed_kmh,\n         total_active_seconds, event_count,\n         first_event_at, last_event_at\n  FROM dim_distances\n`);\nawait client.end();\n\nconst results = [];\nfor (const row of res.rows) {\n  const r = await upsert(row.session_id, {\n    sessionId: row.session_id||'',\n    sessionDate: row.session_date ? new Date(row.session_date).toISOString().split('T')[0] : '',\n    totalDistanceKm: parseFloat(row.total_distance_km)||0,\n    totalDistanceMeters: parseFloat(row.total_distance_meters)||0,\n    maxSpeedKmh: parseFloat(row.max_speed_kmh)||0,\n    avgSpeedKmh: parseFloat(row.avg_speed_kmh)||0,\n    totalActiveSeconds: parseInt(row.total_active_seconds)||0,\n    eventCount: parseInt(row.event_count)||0,\n    firstEventAt: row.first_event_at ? new Date(row.first_event_at).toISOString() : '',\n    lastEventAt: row.last_event_at  ? new Date(row.last_event_at).toISOString()  : '',\n    etlLoadedAt: NOW\n  });\n  results.push(r);\n}\nconst inserted = results.filter(r=>r.action==='inserted').length;\nconst updated  = results.filter(r=>r.action==='updated').length;\nconst errors   = results.filter(r=>r.action==='error').length;\nconsole.log(`[WF-08D] dim_distances → BC: ${inserted} inserts | ${updated} updates | ${errors} errors`);\nreturn [{ json: { table:'dim_distances', total:results.length, inserted, updated, errors } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Déclencheur sous-workflow": {
+      "main": [[{ "node": "Sync dim_distances → BC", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": { "executionOrder": "v1" },
+  "staticData": null, "meta": null, "pinData": {},
+  "versionId": "a1b2c3d4-0008-000d-b001-000000000001",
+  "activeVersionId": "a1b2c3d4-0008-000d-b001-000000000001",
+  "tags": [{ "name": "gold" }, { "name": "business-central" }, { "name": "sous-workflow" }]
+}

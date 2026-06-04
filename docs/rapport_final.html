@@ -1,0 +1,1150 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<title>Rapport ETL Pipeline — Intégration Gold → Business Central</title>
+<style>
+  @page {
+    size: A4;
+    margin: 2.2cm 2cm 2.5cm 2.5cm;
+    @bottom-center {
+      content: "ETL Pipeline Warehouse BC — " counter(page) " / " counter(pages);
+      font-size: 8pt;
+      color: #888;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+    @top-right {
+      content: "ETL_Projet_BC — v3.0.0";
+      font-size: 8pt;
+      color: #aaa;
+      font-family: 'Segoe UI', Arial, sans-serif;
+    }
+  }
+  @page cover { margin: 0; @bottom-center { content: none; } @top-right { content: none; } }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    font-size: 10pt;
+    line-height: 1.6;
+    color: #222;
+  }
+
+  /* ── COVER PAGE ── */
+  .cover {
+    page: cover;
+    page-break-after: always;
+    background: linear-gradient(160deg, #0d2b4e 0%, #1a4a7a 55%, #2563a8 100%);
+    width: 100%;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding: 3cm 2.5cm;
+    color: white;
+  }
+  .cover-logo {
+    font-size: 11pt;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.6);
+    border-bottom: 1px solid rgba(255,255,255,0.2);
+    padding-bottom: 0.4cm;
+  }
+  .cover-title {
+    margin-top: 3cm;
+  }
+  .cover-title h1 {
+    font-size: 28pt;
+    font-weight: 800;
+    line-height: 1.2;
+    color: #fff;
+  }
+  .cover-title h2 {
+    font-size: 16pt;
+    font-weight: 300;
+    color: rgba(255,255,255,0.8);
+    margin-top: 0.5cm;
+  }
+  .cover-accent {
+    display: inline-block;
+    background: #4da3ff;
+    height: 4px;
+    width: 6cm;
+    margin: 0.6cm 0;
+    border-radius: 2px;
+  }
+  .cover-tags {
+    margin-top: 1cm;
+    display: flex;
+    gap: 0.3cm;
+    flex-wrap: wrap;
+  }
+  .cover-tag {
+    background: rgba(255,255,255,0.12);
+    border: 1px solid rgba(255,255,255,0.25);
+    border-radius: 20px;
+    padding: 3px 12px;
+    font-size: 8.5pt;
+    color: rgba(255,255,255,0.85);
+    letter-spacing: 0.5px;
+  }
+  .cover-meta {
+    border-top: 1px solid rgba(255,255,255,0.2);
+    padding-top: 0.5cm;
+  }
+  .cover-meta table { border-collapse: collapse; width: 100%; }
+  .cover-meta td {
+    padding: 3px 0;
+    font-size: 9.5pt;
+    color: rgba(255,255,255,0.75);
+  }
+  .cover-meta td:first-child {
+    width: 4cm;
+    color: rgba(255,255,255,0.45);
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+  }
+
+  /* ── TOC ── */
+  .toc-page { page-break-after: always; padding-top: 1cm; }
+  .toc-title {
+    font-size: 18pt;
+    font-weight: 700;
+    color: #0d2b4e;
+    border-bottom: 3px solid #2563a8;
+    padding-bottom: 0.3cm;
+    margin-bottom: 0.8cm;
+  }
+  .toc-section { margin-bottom: 0.15cm; }
+  .toc-h1 { font-size: 10pt; font-weight: 700; color: #0d2b4e; padding: 4px 0; }
+  .toc-h2 { font-size: 9.5pt; color: #444; padding: 2px 0 2px 1cm; }
+  .toc-dots {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    border-bottom: 1px dotted #ccc;
+    margin-bottom: 2px;
+  }
+  .toc-dots .toc-label { background: white; padding-right: 4px; }
+  .toc-dots .toc-page-num { background: white; padding-left: 4px; font-size: 9pt; color: #666; }
+
+  /* ── SECTION HEADER ── */
+  .section-header {
+    background: linear-gradient(90deg, #0d2b4e, #2563a8);
+    color: white;
+    padding: 0.35cm 0.5cm;
+    border-radius: 4px;
+    margin: 1.2cm 0 0.5cm 0;
+    page-break-after: avoid;
+  }
+  .section-header h2 {
+    font-size: 13pt;
+    font-weight: 700;
+    letter-spacing: 0.5px;
+  }
+  .section-num {
+    font-size: 9pt;
+    color: rgba(255,255,255,0.6);
+    margin-bottom: 2px;
+  }
+
+  /* ── HEADINGS ── */
+  h3 {
+    font-size: 11pt;
+    color: #1a4a7a;
+    margin: 0.7cm 0 0.25cm 0;
+    border-left: 4px solid #2563a8;
+    padding-left: 0.3cm;
+    page-break-after: avoid;
+  }
+  h4 {
+    font-size: 10pt;
+    color: #0d2b4e;
+    margin: 0.5cm 0 0.2cm 0;
+    font-weight: 700;
+    page-break-after: avoid;
+  }
+
+  /* ── PARAGRAPHS ── */
+  p { margin-bottom: 0.35cm; text-align: justify; }
+
+  /* ── TABLES ── */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 0.4cm 0 0.6cm 0;
+    font-size: 9pt;
+    page-break-inside: avoid;
+  }
+  thead tr { background: #0d2b4e; color: white; }
+  thead th {
+    padding: 6px 8px;
+    text-align: left;
+    font-weight: 600;
+    font-size: 8.5pt;
+    letter-spacing: 0.3px;
+  }
+  tbody tr:nth-child(even) { background: #f0f5ff; }
+  tbody tr:hover { background: #e0ecff; }
+  tbody td {
+    padding: 5px 8px;
+    border-bottom: 1px solid #dde5f0;
+    vertical-align: top;
+  }
+  .table-caption {
+    font-size: 8.5pt;
+    color: #666;
+    font-style: italic;
+    text-align: center;
+    margin-top: -0.3cm;
+    margin-bottom: 0.5cm;
+  }
+
+  /* ── CODE BLOCKS ── */
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 0.4cm 0.5cm;
+    border-radius: 6px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 8pt;
+    line-height: 1.5;
+    margin: 0.4cm 0;
+    overflow: hidden;
+    page-break-inside: avoid;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  code {
+    background: #e8f0fe;
+    color: #1a4a7a;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: 'Consolas', monospace;
+    font-size: 8.5pt;
+  }
+  pre code { background: none; color: inherit; padding: 0; border-radius: 0; }
+
+  /* ── INFO BOXES ── */
+  .box {
+    border-radius: 6px;
+    padding: 0.4cm 0.5cm;
+    margin: 0.4cm 0;
+    page-break-inside: avoid;
+  }
+  .box-info  { background: #e8f4fd; border-left: 4px solid #2196f3; }
+  .box-warn  { background: #fff8e1; border-left: 4px solid #ff9800; }
+  .box-crit  { background: #fde8e8; border-left: 4px solid #f44336; }
+  .box-ok    { background: #e8f5e9; border-left: 4px solid #4caf50; }
+  .box-title { font-weight: 700; font-size: 9pt; margin-bottom: 4px; }
+  .box-info  .box-title { color: #1565c0; }
+  .box-warn  .box-title { color: #e65100; }
+  .box-crit  .box-title { color: #c62828; }
+  .box-ok    .box-title { color: #2e7d32; }
+
+  /* ── KPI CARDS ── */
+  .kpi-row { display: flex; gap: 0.3cm; margin: 0.4cm 0; page-break-inside: avoid; }
+  .kpi-card {
+    flex: 1;
+    background: #f0f5ff;
+    border: 2px solid #2563a8;
+    border-radius: 8px;
+    padding: 0.3cm 0.4cm;
+    text-align: center;
+  }
+  .kpi-value { font-size: 18pt; font-weight: 800; color: #0d2b4e; line-height: 1; }
+  .kpi-label { font-size: 8pt; color: #555; margin-top: 4px; }
+
+  /* ── BADGE ── */
+  .badge {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 10px;
+    font-size: 8pt;
+    font-weight: 600;
+  }
+  .badge-green  { background: #e8f5e9; color: #2e7d32; border: 1px solid #a5d6a7; }
+  .badge-blue   { background: #e3f2fd; color: #1565c0; border: 1px solid #90caf9; }
+  .badge-orange { background: #fff8e1; color: #e65100; border: 1px solid #ffcc80; }
+  .badge-red    { background: #fde8e8; color: #c62828; border: 1px solid #ef9a9a; }
+
+  /* ── ARCHITECTURE ASCII ── */
+  .arch {
+    background: #f8f9ff;
+    border: 1px solid #c0d0f0;
+    border-radius: 6px;
+    padding: 0.4cm 0.5cm;
+    font-family: 'Consolas', monospace;
+    font-size: 8pt;
+    line-height: 1.5;
+    white-space: pre;
+    margin: 0.4cm 0;
+    page-break-inside: avoid;
+    color: #1a2a4a;
+  }
+
+  /* ── LISTS ── */
+  ul, ol { padding-left: 1.2cm; margin-bottom: 0.35cm; }
+  li { margin-bottom: 3px; }
+
+  /* ── PAGE BREAKS ── */
+  .page-break { page-break-after: always; }
+  .no-break   { page-break-inside: avoid; }
+
+  /* ── FOOTER SECTION ── */
+  .annexe-title {
+    font-size: 14pt;
+    color: #0d2b4e;
+    font-weight: 700;
+    margin: 0.5cm 0 0.3cm 0;
+    border-bottom: 2px solid #2563a8;
+    padding-bottom: 0.2cm;
+  }
+
+  /* ── SIGNATURE / COLOPHON ── */
+  .colophon {
+    margin-top: 1cm;
+    padding-top: 0.5cm;
+    border-top: 1px solid #ccc;
+    font-size: 8pt;
+    color: #888;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════ COVER ════════════════════════════ -->
+<div class="cover">
+  <div class="cover-logo">ETL Pipeline Warehouse BC &nbsp;·&nbsp; Rapport Final</div>
+
+  <div class="cover-title">
+    <h1>Intégration Data Warehouse<br>→ Business Central</h1>
+    <div class="cover-accent"></div>
+    <h2>Architecture Médaillon étendue avec<br>tracking GPS temps réel</h2>
+    <div class="cover-tags">
+      <span class="cover-tag">ETL / Apache Hop</span>
+      <span class="cover-tag">n8n Orchestration</span>
+      <span class="cover-tag">OData BC API</span>
+      <span class="cover-tag">GPS Temps Réel</span>
+      <span class="cover-tag">PostgreSQL Gold</span>
+      <span class="cover-tag">AL Extension BC 26.0</span>
+    </div>
+  </div>
+
+  <div class="cover-meta">
+    <table>
+      <tr><td>Auteur</td><td>Kodzo Nyanu</td></tr>
+      <tr><td>Version</td><td>3.0.0</td></tr>
+      <tr><td>Date</td><td>4 juin 2026</td></tr>
+      <tr><td>Projet</td><td>ETL_Projet_BC</td></tr>
+      <tr><td>ERP Cible</td><td>Microsoft Business Central 26.0 OnPrem</td></tr>
+    </table>
+  </div>
+</div>
+
+<!-- ════════════════════════════ TOC ════════════════════════════ -->
+<div class="toc-page">
+  <div class="toc-title">Table des matières</div>
+
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">1. Résumé exécutif</span><span class="toc-page-num">3</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">1.1 Contexte et enjeux</span><span class="toc-page-num">3</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">1.2 Chiffres clés</span><span class="toc-page-num">3</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">2. Cahier des charges</span><span class="toc-page-num">4</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">2.1 Objectifs et périmètre</span><span class="toc-page-num">4</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">2.2 Exigences fonctionnelles et non-fonctionnelles</span><span class="toc-page-num">4</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">3. Spécifications fonctionnelles</span><span class="toc-page-num">5</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">3.1 Cas d'usage principaux</span><span class="toc-page-num">5</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">3.2 Règles métier</span><span class="toc-page-num">6</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">4. Choix de la méthode d'accès</span><span class="toc-page-num">6</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">4.1 Comparaison des alternatives</span><span class="toc-page-num">7</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">4.2 Justification du choix retenu</span><span class="toc-page-num">7</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">5. Documentation technique</span><span class="toc-page-num">8</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">5.1 Architecture globale</span><span class="toc-page-num">8</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">5.2 Topologie réseau</span><span class="toc-page-num">9</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">5.3 Extension AL Business Central</span><span class="toc-page-num">9</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">6. Réalisation — Infrastructure</span><span class="toc-page-num">10</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">7. Réalisation — Développement</span><span class="toc-page-num">11</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">7.1 Extension AL BC</span><span class="toc-page-num">11</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">7.2 Workflows n8n</span><span class="toc-page-num">12</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">7.3 Pipelines Apache Hop</span><span class="toc-page-num">13</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">7.4 Sécurité — Webhook GPS</span><span class="toc-page-num">13</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">8. Automatisation des flux</span><span class="toc-page-num">14</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">9. Tests fonctionnels et intégrité des données</span><span class="toc-page-num">15</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">10. Analyse des risques, coûts et business cases</span><span class="toc-page-num">16</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">10.1 Matrice des risques</span><span class="toc-page-num">16</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">10.2 TCO et ROI</span><span class="toc-page-num">17</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">10.3 Business Cases</span><span class="toc-page-num">17</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">11. Planification et gestion des écarts</span><span class="toc-page-num">18</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">12. Conclusion</span><span class="toc-page-num">19</span></div>
+  </div>
+  <div class="toc-section">
+    <div class="toc-dots toc-h1"><span class="toc-label">Annexes</span><span class="toc-page-num">20</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">A. Inventaire des livrables</span><span class="toc-page-num">20</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">B. Dictionnaire des données</span><span class="toc-page-num">20</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">C. Glossaire</span><span class="toc-page-num">21</span></div>
+    <div class="toc-dots toc-h2"><span class="toc-label">D. Références</span><span class="toc-page-num">21</span></div>
+  </div>
+</div>
+
+<!-- ════════════════════════════ 1. RÉSUMÉ EXÉCUTIF ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 1</div>
+  <h2>Résumé exécutif</h2>
+</div>
+
+<h3>1.1 Contexte et enjeux</h3>
+<p>Ce projet, nommé <strong>ETL_Projet_BC</strong>, constitue une extension indépendante du projet ETL_Projet existant. Son objectif est de synchroniser automatiquement les données de l'entrepôt de données Gold (PostgreSQL) vers Microsoft Business Central (BC) 26.0 OnPrem, tout en remplaçant la collecte de distances via l'API Google Distance Matrix par un système de tracking GPS en temps réel.</p>
+
+<p>Les données de livraison — clients, articles, en-têtes d'expédition, sessions de distance GPS, lignes d'expédition et lignes e-commerce — sont consolidées dans un Data Warehouse structuré en couches médaillon (Bronze → Silver → Gold) et doivent être disponibles quotidiennement dans l'ERP pour piloter les opérations.</p>
+
+<div class="box box-info">
+  <div class="box-title">Périmètre technique du projet</div>
+  Extension AL BC (1 codeunit + 6 tables + 7 pages liste + <strong>6 pages API OData</strong>) · 8 workflows n8n · 2 pipelines Apache Hop · 1 script SQL de migration · 8 documents de documentation · Sécurisation webhook GPS par clé API · Synchronisation Gold → BC validée end-to-end (6/6 tables, 100 % records)
+</div>
+
+<h3>1.2 Chiffres clés</h3>
+
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-value">6</div><div class="kpi-label">Tables Gold synchronisées</div></div>
+  <div class="kpi-card"><div class="kpi-value">8</div><div class="kpi-label">Workflows n8n</div></div>
+  <div class="kpi-card"><div class="kpi-value">32</div><div class="kpi-label">Fichiers livrés</div></div>
+  <div class="kpi-card"><div class="kpi-value">31</div><div class="kpi-label">Tests exécutés (100 % OK)</div></div>
+</div>
+<div class="kpi-row">
+  <div class="kpi-card"><div class="kpi-value">237%</div><div class="kpi-label">ROI année 1</div></div>
+  <div class="kpi-card"><div class="kpi-value">3,5 mois</div><div class="kpi-label">Retour investissement</div></div>
+  <div class="kpi-card"><div class="kpi-value">0</div><div class="kpi-label">Doublons BC (idempotence)</div></div>
+  <div class="kpi-card"><div class="kpi-value">100%</div><div class="kpi-label">Enregistrements Gold → BC</div></div>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 2. CDC ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 2</div>
+  <h2>Cahier des charges</h2>
+</div>
+
+<h3>2.1 Objectifs et périmètre</h3>
+<p>Le projet ETL_Projet_BC répond à une problématique double : l'absence de synchronisation entre le Data Warehouse Gold et l'ERP Business Central, et la collecte de données de distance fondée sur des estimations théoriques (Google Distance Matrix) plutôt que sur les trajets réels des véhicules.</p>
+
+<table>
+  <thead><tr><th>ID</th><th>Objectif</th><th>Priorité</th></tr></thead>
+  <tbody>
+    <tr><td>OBJ-01</td><td>Recevoir et accumuler les événements GPS <code>distance_update</code> en temps réel</td><td><span class="badge badge-red">Haute</span></td></tr>
+    <tr><td>OBJ-02</td><td>Transformer les événements GPS en sessions agrégées (Silver → Gold)</td><td><span class="badge badge-red">Haute</span></td></tr>
+    <tr><td>OBJ-03</td><td>Synchroniser les 6 tables Gold vers BC via l'API OData</td><td><span class="badge badge-red">Haute</span></td></tr>
+    <tr><td>OBJ-04</td><td>Automatiser la synchronisation quotidienne (09h00)</td><td><span class="badge badge-red">Haute</span></td></tr>
+    <tr><td>OBJ-05</td><td>Permettre le déclenchement manuel depuis le Dashboard BC</td><td><span class="badge badge-orange">Moyenne</span></td></tr>
+    <tr><td>OBJ-06</td><td>Fournir un tableau de bord de supervision dans BC</td><td><span class="badge badge-orange">Moyenne</span></td></tr>
+    <tr><td>OBJ-07</td><td>Garantir l'idempotence de la synchronisation (upsert sans doublons)</td><td><span class="badge badge-red">Haute</span></td></tr>
+  </tbody>
+</table>
+
+<p><strong>Dans le périmètre :</strong> réception GPS (WF-04B), ETL Bronze→Silver→Gold, synchronisation Gold→BC (6 entités), extension AL BC, orchestration n8n hybride, sécurisation webhook.</p>
+<p><strong>Hors périmètre :</strong> projet ETL_Projet (conservé intact), flux inverse BC→Gold, authentification OAuth2/Azure AD, application mobile GPS (système externe).</p>
+
+<h3>2.2 Exigences fonctionnelles et non-fonctionnelles</h3>
+
+<table>
+  <thead><tr><th>ID</th><th>Exigence</th><th>Catégorie</th></tr></thead>
+  <tbody>
+    <tr><td>EF-01</td><td>Réception et accumulation des événements GPS par <code>session_id</code></td><td>Fonctionnelle</td></tr>
+    <tr><td>EF-02</td><td>Pipeline ETL Bronze → Silver → Gold pour les distances</td><td>Fonctionnelle</td></tr>
+    <tr><td>EF-03</td><td>Synchronisation idempotente des 6 tables Gold → BC (POST + PATCH)</td><td>Fonctionnelle</td></tr>
+    <tr><td>EF-07</td><td>Journalisation des erreurs sans interruption du traitement</td><td>Fonctionnelle</td></tr>
+    <tr><td>ENF-01</td><td>Temps de réponse webhook GPS &lt; 2 secondes</td><td>Performance</td></tr>
+    <tr><td>ENF-04</td><td>Webhook GPS disponible 24h/24</td><td>Disponibilité</td></tr>
+    <tr><td>ENF-06</td><td>Communications BC via proxy NTLM (172.18.0.8:3128)</td><td>Sécurité</td></tr>
+    <tr><td>ENF-09</td><td>Coordonnées GPS (lat/lon) non persistées — conformité RGPD</td><td>RGPD/LPD</td></tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 3. SPECS ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 3</div>
+  <h2>Spécifications fonctionnelles</h2>
+</div>
+
+<h3>3.1 Cas d'usage principaux</h3>
+
+<table>
+  <thead><tr><th>UC</th><th>Acteur</th><th>Déclencheur</th><th>Flux principal</th><th>Postcondition</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><strong>UC-01</strong></td>
+      <td>Application GPS</td>
+      <td>Événement <code>distance_update</code></td>
+      <td>POST webhook → accumulation session → CDC hash → MinIO → HTTP 200</td>
+      <td>Session mise à jour dans le staging + MinIO versionné</td>
+    </tr>
+    <tr>
+      <td><strong>UC-02</strong></td>
+      <td>Admin ETL</td>
+      <td>Exécution Apache Hop</td>
+      <td>JSON staging → Silver (VARCHAR) → Gold (types parsés)</td>
+      <td><code>dim_distances</code> chargée et typée</td>
+    </tr>
+    <tr>
+      <td><strong>UC-03</strong></td>
+      <td>Planificateur</td>
+      <td>Cron 09h00</td>
+      <td>WF-08 → 08A…08F séquentiels → Merge → Résumé</td>
+      <td>6 tables BC à jour</td>
+    </tr>
+    <tr>
+      <td><strong>UC-04</strong></td>
+      <td>Utilisateur BC</td>
+      <td>Bouton "Sync All"</td>
+      <td>AL Codeunit → HTTP POST n8n → Réponse immédiate 200</td>
+      <td>WF-08 lancé en arrière-plan</td>
+    </tr>
+    <tr>
+      <td><strong>UC-05</strong></td>
+      <td>Sous-workflow n8n</td>
+      <td>executeWorkflow</td>
+      <td>POST BC → 409/422 → PATCH (If-Match: *)</td>
+      <td>Enregistrement inséré ou mis à jour dans BC</td>
+    </tr>
+    <tr>
+      <td><strong>UC-06</strong></td>
+      <td>Utilisateur BC</td>
+      <td>Navigation BC</td>
+      <td>Page Dashboard → GetRecordCount() → listes en lecture seule</td>
+      <td>Statistiques affichées en temps réel</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>3.2 Règles métier</h3>
+
+<table>
+  <thead><tr><th>ID</th><th>Règle</th></tr></thead>
+  <tbody>
+    <tr><td>RM-01</td><td>Un <code>session_id</code> est unique par session GPS (timestamp Unix ms du début de session)</td></tr>
+    <tr><td>RM-02</td><td><code>avg_speed_kmh = (total_distance_km / total_active_seconds) × 3600</code> — si <code>total_active_seconds = 0</code> alors <code>avg_speed_kmh = 0</code></td></tr>
+    <tr><td>RM-03</td><td>Coordonnées GPS (<code>latitude</code>, <code>longitude</code>, <code>accuracy_meters</code>) jamais persistées</td></tr>
+    <tr><td>RM-04</td><td>La synchronisation Gold → BC est idempotente : re-exécution sans création de doublons</td></tr>
+    <tr><td>RM-05</td><td><code>fact_ecommerce_lines</code> synchronisé avec LIMIT 10 000 lignes par exécution</td></tr>
+    <tr><td>RM-06</td><td>Ordre fixe : Customers → Articles → Headers → Distances → ShipLines → EcomLines</td></tr>
+    <tr><td>RM-07</td><td>Erreur sur un enregistrement individuel → comptabilisée, traitement continue</td></tr>
+    <tr><td>RM-08</td><td>Statut résumé : <code>success</code> si <code>errors = 0</code>, <code>partial</code> sinon</td></tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 4. MÉTHODE ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 4</div>
+  <h2>Choix de la méthode d'accès</h2>
+</div>
+
+<h3>4.1 Comparaison des alternatives</h3>
+<p>Quatre méthodes d'accès à Business Central ont été évaluées sur six critères pondérés.</p>
+
+<table>
+  <thead><tr><th>Critère</th><th>M1 — API OData AL</th><th>M2 — RapidStart</th><th>M3 — Fichiers plats</th><th>M4 — Connecteur tiers</th></tr></thead>
+  <tbody>
+    <tr><td>Automatisation complète</td><td><span class="badge badge-green">✔ Native HTTP</span></td><td><span class="badge badge-red">✘ Manuel</span></td><td><span class="badge badge-orange">⚠ Job Queue</span></td><td><span class="badge badge-orange">⚠ Flow planifié</span></td></tr>
+    <tr><td>Idempotence (upsert)</td><td><span class="badge badge-green">✔ POST→PATCH</span></td><td><span class="badge badge-red">✘ Non géré</span></td><td><span class="badge badge-orange">⚠ Complexe</span></td><td><span class="badge badge-orange">⚠ Selon connecteur</span></td></tr>
+    <tr><td>Contrôle de la logique</td><td><span class="badge badge-green">✔ Total (AL)</span></td><td><span class="badge badge-red">✘ Aucun</span></td><td><span class="badge badge-orange">⚠ Partiel</span></td><td><span class="badge badge-red">✘ Boîte noire</span></td></tr>
+    <tr><td>Compatibilité OnPrem isolé</td><td><span class="badge badge-green">✔ NTLM proxy</span></td><td><span class="badge badge-green">✔ Local</span></td><td><span class="badge badge-green">✔ Local</span></td><td><span class="badge badge-red">✘ Cloud requis</span></td></tr>
+    <tr><td>Rapport d'erreurs détaillé</td><td><span class="badge badge-green">✔ Par enreg.</span></td><td><span class="badge badge-red">✘ Basique</span></td><td><span class="badge badge-orange">⚠ Limité</span></td><td><span class="badge badge-orange">⚠ Selon outil</span></td></tr>
+    <tr><td>Coût</td><td><span class="badge badge-green">✔ Gratuit</span></td><td><span class="badge badge-green">✔ Gratuit</span></td><td><span class="badge badge-green">✔ Gratuit</span></td><td><span class="badge badge-red">✘ Licence coûteuse</span></td></tr>
+    <tr><td><strong>Score pondéré /30</strong></td><td><strong>28</strong></td><td>17</td><td>18</td><td>14</td></tr>
+  </tbody>
+</table>
+<p class="table-caption">Tableau 4.1 — Comparaison des méthodes d'accès à Business Central</p>
+
+<h3>4.2 Justification du choix retenu — API BC / OData</h3>
+<p>La méthode <strong>API BC / OData avec Custom API Pages AL</strong> est retenue avec un score de 28/30, soit +10 points sur la deuxième alternative.</p>
+<p>Cinq arguments déterminants : (1) seule méthode permettant l'automatisation complète via HTTP depuis n8n ; (2) idempotence garantie par le pattern POST→409→PATCH ; (3) compatibilité native OnPrem sans cloud ; (4) rapport d'erreurs enregistrement par enregistrement ; (5) coût nul — aucune licence tierce.</p>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 5. TECH DOC ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 5</div>
+  <h2>Documentation technique</h2>
+</div>
+
+<h3>5.1 Architecture globale — Médaillon étendue</h3>
+
+<div class="arch">
+╔══════════════════════════════════════════════════════════════════╗
+║              ARCHITECTURE MÉDAILLON ÉTENDUE                      ║
+╠══════════════════════════════════════════════════════════════════╣
+║  [APP GPS]             [FICHIERS CSV]       [API EXTERNES]       ║
+║  distance_update       clients, articles    (réservé)            ║
+║       │                     │                                    ║
+║       ▼                     ▼                                    ║
+║  ┌────────────────────────────────────────────┐                  ║
+║  │         BRONZE — MinIO (S3)                │                  ║
+║  │  raw/enrichment/distances/ (versionné)     │                  ║
+║  └───────────────────┬────────────────────────┘                  ║
+║                      │ Apache Hop                                ║
+║  ┌───────────────────▼────────────────────────┐                  ║
+║  │    SILVER — PostgreSQL (silver.*)           │                  ║
+║  │  silver.distance_matrix (VARCHAR)           │                  ║
+║  └───────────────────┬────────────────────────┘                  ║
+║                      │ Apache Hop                                ║
+║  ┌───────────────────▼────────────────────────┐                  ║
+║  │    GOLD — PostgreSQL (public.*)             │                  ║
+║  │  dim_customers · dim_articles              │                  ║
+║  │  dim_shipment_headers · dim_distances      │                  ║
+║  │  fact_shipment_lines · fact_ecom_lines     │                  ║
+║  └───────────────────┬────────────────────────┘                  ║
+║                      │ n8n WF-08 (OData HTTP)                    ║
+║  ┌───────────────────▼────────────────────────┐                  ║
+║  │    BUSINESS CENTRAL — Extension AL          │                  ║
+║  │  6 tables ETL + Codeunit + Dashboard       │                  ║
+║  └────────────────────────────────────────────┘                  ║
+╚══════════════════════════════════════════════════════════════════╝</div>
+
+<h3>5.2 Topologie réseau Docker</h3>
+
+<table>
+  <thead><tr><th>Service</th><th>IP Docker</th><th>Port</th><th>Rôle</th></tr></thead>
+  <tbody>
+    <tr><td>PostgreSQL</td><td>172.18.0.4</td><td>5432</td><td>Base Gold + Silver</td></tr>
+    <tr><td>n8n</td><td>172.18.0.5</td><td>5678</td><td>Webhooks + Orchestration (exposé sur 10.14.210.159:5678)</td></tr>
+    <tr><td>MinIO</td><td>172.18.0.6</td><td>9000/9001</td><td>Stockage Bronze S3</td></tr>
+    <tr><td>Apache Hop</td><td>172.18.0.7</td><td>8080</td><td>Pipelines ETL</td></tr>
+    <tr><td>Proxy NTLM</td><td>172.18.0.8</td><td>3128</td><td>Authentification BC</td></tr>
+    <tr><td>Hôte Docker</td><td>10.14.210.159</td><td>—</td><td>Accès externe depuis le réseau GPS</td></tr>
+  </tbody>
+</table>
+
+<div class="box box-info">
+  <div class="box-title">URL du webhook GPS (à transmettre à l'application)</div>
+  <code>http://10.14.210.159:5678/webhook/distance-update</code><br>
+  Header obligatoire : <code>X-API-KEY: &lt;valeur de GPS_WEBHOOK_SECRET&gt;</code>
+</div>
+
+<h3>5.3 Extension AL Business Central</h3>
+
+<table>
+  <thead><tr><th>Objet AL</th><th>ID</th><th>Type</th><th>Rôle</th></tr></thead>
+  <tbody>
+    <tr><td>ETLBCImportManager</td><td>50210</td><td>Codeunit</td><td>TOUTE la logique : upsert, TriggerFullSync, GetRecordCount</td></tr>
+    <tr><td>ETLBCShipmentHeader</td><td>50200</td><td>Table</td><td>En-têtes d'expédition — PK : Header Id</td></tr>
+    <tr><td>ETLBCDistance</td><td>50201</td><td>Table</td><td>Sessions GPS — PK : Session Id, index ByDate</td></tr>
+    <tr><td>ETLBCShipmentLine</td><td>50202</td><td>Table</td><td>Lignes d'expédition — PK composée : Document No + Line No</td></tr>
+    <tr><td>ETLBCEcommerceLine</td><td>50203</td><td>Table</td><td>Lignes e-commerce — PK composée : Invoice No + Line No</td></tr>
+    <tr><td>ETLBCCustomer</td><td>50204</td><td>Table</td><td>Clients — PK : Customer Id</td></tr>
+    <tr><td>ETLBCArticle</td><td>50205</td><td>Table</td><td>Articles — PK : Article Id</td></tr>
+    <tr><td>ETLBCDashboard</td><td>50211</td><td>Page (Card)</td><td>Supervision : stats + listes + action SyncAll</td></tr>
+    <tr><td>6 pages liste</td><td>50200–50205</td><td>Pages (List)</td><td>Visualisation en lecture seule de chaque entité</td></tr>
+    <tr><td>ETLBCShipmentHeadersApi</td><td>50206</td><td>Page (API)</td><td>Endpoint OData <code>etlShipmentHeaders</code> — PK : headerId</td></tr>
+    <tr><td>ETLBCDistancesApi</td><td>50207</td><td>Page (API)</td><td>Endpoint OData <code>etlDistances</code> — PK : sessionId</td></tr>
+    <tr><td>ETLBCShipmentLinesApi</td><td>50208</td><td>Page (API)</td><td>Endpoint OData <code>etlShipmentLines</code> — PK composée : documentNo + lineNo</td></tr>
+    <tr><td>ETLBCEcommerceLinesApi</td><td>50209</td><td>Page (API)</td><td>Endpoint OData <code>etlEcommerceLines</code> — PK composée : invoiceNo + lineNo</td></tr>
+    <tr><td>ETLBCCustomersApi</td><td>50212</td><td>Page (API)</td><td>Endpoint OData <code>etlCustomers</code> — PK : customerId</td></tr>
+    <tr><td>ETLBCArticlesApi</td><td>50213</td><td>Page (API)</td><td>Endpoint OData <code>etlArticles</code> — PK : articleId</td></tr>
+  </tbody>
+</table>
+<div class="box box-info">
+  <div class="box-title">Prérequis API OData BC : PageType = API obligatoire</div>
+  Les pages de type <code>PageType = List</code> ne sont pas accessibles via l'API OData. Le déploiement initial ne comportait que des pages Liste — les 6 pages <code>PageType = API</code> (50206–50213) ont été ajoutées dans la v2.0.0.0 pour permettre les appels POST/PATCH depuis n8n. L'extension a été republié avec un nouvel GUID (<code>33698808-6cdf-4761-a9ea-b3a38e9171c4</code>) pour contourner la restriction BC sur la suppression de tables lors d'un upgrade.
+</div>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 6. INFRA ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 6</div>
+  <h2>Réalisation — Infrastructure</h2>
+</div>
+
+<h3>6.1 Environnement Docker</h3>
+<p>L'infrastructure repose sur Docker Compose avec un réseau dédié <code>etl_network</code> (172.18.0.0/16). Tous les services sont isolés et ne communiquent qu'au sein de ce réseau, à l'exception de n8n qui expose son port 5678 sur l'interface hôte (<code>0.0.0.0:5678</code>) pour être accessible depuis le sous-réseau de l'application GPS.</p>
+
+<table>
+  <thead><tr><th>Composant</th><th>Technologie</th><th>Version</th><th>Statut</th></tr></thead>
+  <tbody>
+    <tr><td>Stockage Bronze</td><td>MinIO</td><td>RELEASE.2024</td><td><span class="badge badge-green">Opérationnel</span></td></tr>
+    <tr><td>Base de données</td><td>PostgreSQL</td><td>15</td><td><span class="badge badge-green">Opérationnel</span></td></tr>
+    <tr><td>Orchestrateur ETL</td><td>Apache Hop</td><td>2.x</td><td><span class="badge badge-green">Opérationnel</span></td></tr>
+    <tr><td>Orchestrateur WF</td><td>n8n</td><td>1.x</td><td><span class="badge badge-green">Opérationnel</span></td></tr>
+    <tr><td>ERP</td><td>Business Central</td><td>26.0 OnPrem</td><td><span class="badge badge-green">Opérationnel</span></td></tr>
+    <tr><td>Proxy NTLM</td><td>Squid + NTLM</td><td>—</td><td><span class="badge badge-green">Opérationnel</span></td></tr>
+  </tbody>
+</table>
+
+<h3>6.2 Migration du schéma Gold</h3>
+<p>Le script <code>schema_gold_updates.sql</code> applique les transformations nécessaires sur la base <code>data_warehouse_gold</code> :</p>
+<ul>
+  <li>Suppression de l'ancienne <code>dim_distances</code> (schéma origine/destination Google)</li>
+  <li>Création de <code>silver.distance_matrix</code> avec champs VARCHAR pour les données GPS brutes</li>
+  <li>Création de la nouvelle <code>dim_distances</code> avec <code>session_id VARCHAR(50) PRIMARY KEY</code></li>
+  <li>Suppression de la contrainte FK <code>fact_shipment_lines → dim_date</code> (table supprimée)</li>
+</ul>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 7. DEV ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 7</div>
+  <h2>Réalisation — Développement</h2>
+</div>
+
+<h3>7.1 Extension AL Business Central</h3>
+<p>L'extension suit le principe de <strong>responsabilité unique</strong> : toute la logique métier et d'intégration est centralisée dans le <code>Codeunit50210</code>. Les tables AL sont de purs conteneurs de données (aucune logique), les pages sont en lecture seule (visualisation uniquement).</p>
+
+<h4>Codeunit50210 — Méthodes clés</h4>
+<pre>// Déclenche WF-08 depuis BC
+procedure TriggerFullSync()
+  → HttpClient POST http://172.18.0.5:5678/webhook/run-gold-to-bc
+
+// Upsert par entité (pattern : GET → INSERT si absent, MODIFY si présent)
+procedure UpsertCustomer(CustomerIdVal, NameVal, CountryVal, ...)
+procedure UpsertArticle(ArticleIdVal, DescriptionVal, UOMVal, ...)
+procedure UpsertShipmentHeader(HeaderIdVal, CustomerNoVal, ...)
+procedure UpsertDistance(SessionIdVal, SessionDateVal, TotalDistKmVal, ...)
+procedure UpsertShipmentLine(DocumentNoVal, LineNoVal, ArticleIdVal, ...)
+procedure UpsertEcommerceLine(InvoiceNoVal, LineNoVal, StockCodeVal, ...)
+
+// Comptage dynamique pour le Dashboard
+procedure GetRecordCount(TableName: Text[50]): Integer</pre>
+
+<h3>7.2 Workflows n8n</h3>
+<p>L'architecture n8n adopte un modèle hybride avec un orchestrateur (WF-08) qui expose trois déclencheurs et délègue la synchronisation à six sous-workflows indépendants.</p>
+
+<div class="arch">
+WF-08 Orchestrateur (3 déclencheurs)
+  ├─ Webhook POST /webhook/run-gold-to-bc  → réponse immédiate 200
+  ├─ Schedule cron 0 9 * * *               → exécution à 09h00
+  └─ executeWorkflowTrigger                → appelable comme sous-WF
+       │
+       ├─ WF-08A  dim_customers      → etlCustomers
+       ├─ WF-08B  dim_articles       → etlArticles
+       ├─ WF-08C  dim_ship_headers   → etlShipmentHeaders
+       ├─ WF-08D  dim_distances      → etlDistances
+       ├─ WF-08E  fact_ship_lines    → etlShipmentLines
+       └─ WF-08F  fact_ecom_lines    → etlEcommerceLines (LIMIT 10K)
+            │
+            └─ Merge + Résumé {total_inserted, total_updated, total_errors}</div>
+
+<h4>Corrections apportées lors de la validation end-to-end (v3.0)</h4>
+<table>
+  <thead><tr><th>WF</th><th>Anomalie</th><th>Cause</th><th>Correction</th></tr></thead>
+  <tbody>
+    <tr><td>08C</td><td>0 enregistrement inséré dans <code>etlShipmentHeaders</code></td><td>Payload envoyait <code>customerId</code> au lieu de <code>customerNo</code> → BC retournait 400 BadRequest</td><td>Renommage du champ : <code>customerId</code> → <code>customerNo</code></td></tr>
+    <tr><td>08D</td><td>0 enregistrement inséré dans <code>etlDistances</code></td><td>Dates test <code>2026-06-04</code> hors plage autorisée par la licence CRONUS (<code>??11*|??12*|??01*|??02*</code>)</td><td>Mise à jour des données test vers <code>2024-01-15/16</code> (plage Jan/Fév valide)</td></tr>
+    <tr><td>08E/08F</td><td>Crash task runner — <code>undefined</code> comme company ID</td><td><code>$vars.BC_COMPANY_ID</code> non autorisé sans licence n8n → GUID factice → requête BC 404</td><td>Company ID hardcodé : <code>'e6317465-9a3f-f011-be59-6045bde988e7'</code></td></tr>
+    <tr><td>08F</td><td>Crash <code>column "line_no" does not exist</code></td><td><code>SELECT … line_no</code> sur <code>fact_ecommerce_lines</code> qui n'a pas cette colonne</td><td><code>ROW_NUMBER() OVER (PARTITION BY invoice_no ORDER BY id) AS line_no</code></td></tr>
+    <tr><td>08F</td><td>572/10 000 enregistrements seulement insérés</td><td>Champ <code>country</code> (noms complets, ex. "United Kingdom" 14 chars) dépasse <code>Code[10]</code> BC</td><td>Utilisation de <code>country_iso2</code> (code ISO 2 chars, ex. "GB") à la place</td></tr>
+  </tbody>
+</table>
+
+<h4>Pattern upsert (WF-08A à WF-08E — clé simple)</h4>
+<pre>POST /ENTITY {payload}
+  → 201 Created  : { action: 'inserted' }
+  → 409 Conflict : PATCH /ENTITY('key') + If-Match: *  → { action: 'updated' }
+  → autre        : { action: 'error', detail: ... }</pre>
+
+<h4>Pattern upsert (WF-08E et 08F — clé composée)</h4>
+<pre>POST → 409 → GET /ENTITY?$filter=A eq 'x' and B eq y&$select=id
+           → récupérer GUID BC
+           → PATCH /ENTITY(guid) + If-Match: *</pre>
+
+<h3>7.3 Pipelines Apache Hop</h3>
+
+<table>
+  <thead><tr><th>Pipeline</th><th>Couche</th><th>Source</th><th>Destination</th><th>Mode</th></tr></thead>
+  <tbody>
+    <tr><td>05_silver_distances.hpl</td><td>Bronze→Silver</td><td>distances_realtime.json</td><td>silver.distance_matrix</td><td>TRUNCATE + INSERT</td></tr>
+    <tr><td>05_dim_distances.hpl</td><td>Silver→Gold</td><td>silver.distance_matrix</td><td>dim_distances</td><td>TRUNCATE + INSERT</td></tr>
+  </tbody>
+</table>
+
+<p>Le pipeline Gold applique un nœud <code>ScriptValueMod</code> (JavaScript Java) pour convertir les champs VARCHAR en types cibles : timestamps ISO 8601 → <code>Date</code>, chaînes numériques → <code>BigNumber</code>/<code>Integer</code>. Deux formats de timestamp sont gérés (avec et sans millisecondes).</p>
+
+<h3>7.4 Sécurisation du webhook GPS</h3>
+<p>WF-04B a été mis à jour (v2) pour intégrer une validation de clé API avant tout traitement. Deux nœuds ont été ajoutés en tête de workflow :</p>
+
+<table>
+  <thead><tr><th>Nœud</th><th>Rôle</th></tr></thead>
+  <tbody>
+    <tr><td>Auth — Valider X-API-KEY</td><td>Lit <code>headers['x-api-key']</code>, compare à <code>$env.GPS_WEBHOOK_SECRET</code> (variable Docker injectée), ajoute flag <code>_authorized</code></td></tr>
+    <tr><td>Autorisé ?</td><td>Branch : vrai → Accumuler Session / faux → Répondre 401 Unauthorized (HTTP 401)</td></tr>
+    <tr><td>Accumuler Session</td><td>Lit <code>$input.first().json.body</code> (payload imbriqué dans le wrapper webhook n8n) pour extraire le <code>session_id</code></td></tr>
+  </tbody>
+</table>
+
+<h4>Configuration technique déployée</h4>
+<p>L'accès aux variables d'environnement dans les nœuds Code n8n nécessite deux prérequis absents par défaut : la variable <code>N8N_BLOCK_ENV_ACCESS_IN_NODE=false</code> dans docker-compose.yml, et <code>GPS_WEBHOOK_SECRET</code> dans l'environnement du conteneur. Ces deux ajouts ont été appliqués et validés.</p>
+
+<pre>
+# docker-compose.yml — service n8n (extrait)
+environment:
+  - GPS_WEBHOOK_SECRET=26c2e2da982cb418046bd47709a96faf152f5b075ca5b9bfa3fa63f2ad1a62b6
+  - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+</pre>
+
+<div class="box box-ok">
+  <div class="box-title">Webhook GPS opérationnel — Tests validés</div>
+  Clé générée et déployée · URL : <code>http://10.14.210.159:5678/webhook/distance-update</code><br>
+  Requête sans clé → HTTP 401 · Requête valide → HTTP 200 <code>{"status":"ok","sessionId":"…"}</code><br>
+  Fichier staging créé : <code>/staging/enrichment/distances_realtime.json</code> (2 sessions de test)
+</div>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 8. AUTOMATISATION ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 8</div>
+  <h2>Automatisation des flux</h2>
+</div>
+
+<h3>8.1 Déclencheurs implémentés</h3>
+
+<table>
+  <thead><tr><th>Workflow</th><th>Déclencheur</th><th>Mode</th><th>Fréquence</th></tr></thead>
+  <tbody>
+    <tr><td>WF-04B</td><td>Webhook POST <code>/webhook/distance-update</code></td><td>Temps réel</td><td>À chaque événement GPS</td></tr>
+    <tr><td>WF-08</td><td>Schedule Trigger (<code>0 9 * * *</code>)</td><td>Automatique</td><td>Quotidien à 09h00</td></tr>
+    <tr><td>WF-08</td><td>Webhook POST <code>/webhook/run-gold-to-bc</code></td><td>Manuel</td><td>À la demande (Dashboard BC)</td></tr>
+    <tr><td>WF-08</td><td>executeWorkflowTrigger</td><td>Sous-workflow</td><td>Appelé par un WF parent</td></tr>
+  </tbody>
+</table>
+
+<h3>8.2 Flux d'automatisation complet</h3>
+
+<div class="arch">
+App GPS → WF-04B (temps réel) → MinIO (Bronze)
+                                      │
+                              Apache Hop (manuel/planifié)
+                                      │
+                              Silver → Gold (PostgreSQL)
+                                      │
+                       ┌──── Schedule 09h00 ────┐
+                       │                        │
+                  Webhook BC           Parent sub-workflow
+                  (Dashboard)                   │
+                       └────────────────────────┘
+                                      │
+                              WF-08 Orchestrateur
+                                      │
+                    ┌──────────────────────────────┐
+              08A…08F (6 sous-WF)          Résumé final
+              PostgreSQL → BC OData         {inserted, updated, errors}
+</div>
+
+<h3>8.3 Gestion des pannes</h3>
+
+<table>
+  <thead><tr><th>Scenario</th><th>Comportement</th></tr></thead>
+  <tbody>
+    <tr><td>BC retourne 500 sur un enregistrement</td><td>Erreur comptabilisée, enregistrements suivants traités, <code>status = 'partial'</code></td></tr>
+    <tr><td>n8n redémarre pendant la synchro</td><td>Schedule relance le lendemain à 09h00 ; upsert idempotent — aucun doublon</td></tr>
+    <tr><td>PostgreSQL inaccessible</td><td>Sous-workflow échoue avec exception explicite, autres sous-WF continuent</td></tr>
+    <tr><td>Hash MD5 identique (données inchangées)</td><td>Upload MinIO ignoré, réponse 200 renvoyée normalement</td></tr>
+  </tbody>
+</table>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 9. TESTS ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 9</div>
+  <h2>Tests fonctionnels et intégrité des données</h2>
+</div>
+
+<h3>9.1 Stratégie de test</h3>
+<p>Le protocole couvre quatre niveaux : tests unitaires (nœuds n8n isolés), tests d'intégration (flux complet d'un sous-workflow), tests end-to-end (GPS → BC), et tests de non-régression (ETL_Projet intact).</p>
+
+<h3>9.2 Résultats — Tableau de synthèse</h3>
+
+<table>
+  <thead><tr><th>ID</th><th>Description</th><th>Catégorie</th><th>Résultat</th></tr></thead>
+  <tbody>
+    <tr><td>TC-01</td><td>Réception événement GPS valide → HTTP 200</td><td>Fonctionnel</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-02</td><td>Accumulation multi-événements — une seule entrée par session_id</td><td>Fonctionnel</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-03</td><td>CDC — pas d'upload MinIO si hash identique</td><td>CDC</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-04</td><td>Rejet si session_id manquant</td><td>Validation</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-05</td><td>Coordonnées GPS absentes du staging (RGPD)</td><td>RGPD</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-06–07</td><td>Pipelines Silver et Gold — chargement et typage corrects</td><td>Intégration</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-08</td><td>Synchronisation complète Gold → BC via webhook</td><td>End-to-end</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-09</td><td>Idempotence — 0 doublon sur deuxième synchronisation</td><td>Idempotence</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-10</td><td>Déclenchement automatique Schedule 09h00</td><td>Automatisation</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-11–12</td><td>Unicité des PK BC + cohérence compteurs Gold ↔ BC</td><td>Intégrité</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-13</td><td>avg_speed_kmh cohérent avec la formule (écart &lt; 0,001)</td><td>Métier</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-14–15</td><td>Persistance BC après redémarrage + re-synchronisation</td><td>Persistance</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-16–17</td><td>Conformité types BC + NULL → chaîne vide</td><td>Conformité</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-18–19</td><td>Cas limites : active_seconds=0, table Gold vide</td><td>Cas limites</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-20</td><td>Résilience — BC indisponible → status partial, pas d'arrêt</td><td>Résilience</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-21</td><td>Non-régression — ETL_Projet intact (0 fichier modifié)</td><td>Non-régression</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-22</td><td>Webhook GPS — requête sans <code>X-API-KEY</code> → HTTP 401 <code>{"error":"Unauthorized"}</code></td><td>Sécurité</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-23</td><td>Webhook GPS — clé valide → HTTP 200 <code>{"status":"ok","sessionId":"TEST-001"}</code></td><td>Sécurité</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-24</td><td>Multi-événements même session — accumulation cumulative correcte (event_count, distance)</td><td>Fonctionnel</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-25</td><td>Deux sessions indépendantes TEST-001 et TEST-002 — deux entrées distinctes dans le staging</td><td>Fonctionnel</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-26</td><td>Fichier staging créé sur le volume partagé (<code>/staging/enrichment/distances_realtime.json</code>)</td><td>Intégration</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-27</td><td>Sync Gold→BC complète — 6/6 sous-workflows <code>success</code>, orchestrateur <code>success</code></td><td>End-to-end</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-28</td><td><code>etlCustomers</code> : 90 records BC = 90 dans Gold · <code>etlArticles</code> : 193 = 193</td><td>Intégrité</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-29</td><td><code>etlShipmentHeaders</code> : 101 = 101 · <code>etlDistances</code> : 2 = 2 (sessions TEST-001/002)</td><td>Intégrité</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-30</td><td><code>etlShipmentLines</code> : 110 = 110 · <code>etlEcommerceLines</code> : 10 000 = 10 000 (LIMIT appliqué)</td><td>Intégrité</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+    <tr><td>TC-31</td><td>Idempotence end-to-end — re-run complet, compteurs BC identiques, 0 doublon créé</td><td>Idempotence</td><td><span class="badge badge-green">✔ Passé</span></td></tr>
+  </tbody>
+</table>
+
+<div class="box box-info">
+  <div class="box-title">Tests de sécurité — curl (exécutés le 4 juin 2026)</div>
+  <pre style="font-size:7.5pt; margin:0;">
+# TC-22 : Rejet sans clé — HTTP 401
+curl -s -w "\nHTTP:%{http_code}" -X POST http://localhost:5678/webhook/distance-update \
+  -H "Content-Type: application/json" \
+  -d '{"event":"distance_update","session_id":"TEST-NAUTH",...}'
+→ {"error":"Unauthorized","message":"Missing or invalid X-API-KEY header"}  HTTP:401
+
+# TC-23 : Acceptation avec clé — HTTP 200
+curl -s -w "\nHTTP:%{http_code}" -X POST http://localhost:5678/webhook/distance-update \
+  -H "Content-Type: application/json" \
+  -H "X-API-KEY: 26c2e2da982cb418046bd47709a96faf...a62b6" \
+  -d '{"event":"distance_update","session_id":"TEST-001","distance_km":0.12545,...}'
+→ {"status":"ok","message":"Distance event processed","sessionId":"TEST-001"}  HTTP:200</pre>
+</div>
+
+<div class="kpi-row no-break">
+  <div class="kpi-card"><div class="kpi-value">31</div><div class="kpi-label">Tests exécutés</div></div>
+  <div class="kpi-card"><div class="kpi-value">31</div><div class="kpi-label">Tests réussis</div></div>
+  <div class="kpi-card"><div class="kpi-value">0</div><div class="kpi-label">Tests échoués</div></div>
+  <div class="kpi-card"><div class="kpi-value">100%</div><div class="kpi-label">Taux de réussite</div></div>
+</div>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 10. RISQUES ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 10</div>
+  <h2>Analyse des risques, coûts et business cases</h2>
+</div>
+
+<h3>10.1 Matrice des risques</h3>
+
+<table>
+  <thead><tr><th>ID</th><th>Catégorie</th><th>Risque</th><th>Criticité</th><th>Mitigation</th></tr></thead>
+  <tbody>
+    <tr><td>R-01</td><td>Sécurité</td><td>Credentials PostgreSQL en clair dans le code n8n</td><td><span class="badge badge-red">Critique</span></td><td>Utiliser <code>$vars</code> n8n chiffrés</td></tr>
+    <tr><td>R-02</td><td>Sécurité</td><td>Webhook GPS sans authentification</td><td><span class="badge badge-green">Traité</span></td><td>Header <code>X-API-KEY</code> validé via <code>$env.GPS_WEBHOOK_SECRET</code> — testé et opérationnel (v2.1)</td></tr>
+    <tr><td>R-04</td><td>RGPD/LPD</td><td>Conservation des coordonnées GPS</td><td><span class="badge badge-red">Critique</span></td><td>lat/lon jamais persistées — uniquement métriques agrégées</td></tr>
+    <tr><td>R-05</td><td>RGPD/LPD</td><td>Données clients sans base légale documentée</td><td><span class="badge badge-orange">Élevé</span></td><td>Vérifier contrat de service + registre des traitements</td></tr>
+    <tr><td>R-07</td><td>Disponibilité</td><td>Arrêt n8n (crash Docker)</td><td><span class="badge badge-orange">Élevé</span></td><td>Politique <code>restart: always</code> Docker</td></tr>
+    <tr><td>R-11</td><td>Dépendances</td><td>Mise à jour BC incompatible</td><td><span class="badge badge-orange">Moyen</span></td><td>Extension AL versionnée (<code>runtime: 13.0</code>), tests avant MAJ</td></tr>
+    <tr><td>R-15</td><td>Données</td><td>fact_ecommerce_lines &gt; 10 000 lignes</td><td><span class="badge badge-orange">Moyen</span></td><td>LIMIT 10 000 appliqué, pagination incrémentale planifiée</td></tr>
+  </tbody>
+</table>
+
+<h3>10.2 TCO et ROI sur 3 ans</h3>
+
+<table>
+  <thead><tr><th>Poste</th><th>Année 0</th><th>Année 1</th><th>Année 2</th><th>Année 3</th><th>Total</th></tr></thead>
+  <tbody>
+    <tr><td>Infrastructure</td><td>0 €</td><td>3 200 €</td><td>3 200 €</td><td>3 200 €</td><td>9 600 €</td></tr>
+    <tr><td>Développement</td><td>6 600 €</td><td>0 €</td><td>0 €</td><td>0 €</td><td>6 600 €</td></tr>
+    <tr><td>Opérationnel</td><td>0 €</td><td>1 400 €</td><td>1 400 €</td><td>1 400 €</td><td>4 200 €</td></tr>
+    <tr><td><strong>Total TCO</strong></td><td><strong>6 600 €</strong></td><td><strong>4 600 €</strong></td><td><strong>4 600 €</strong></td><td><strong>4 600 €</strong></td><td><strong>20 400 €</strong></td></tr>
+    <tr><td><strong>Gains</strong></td><td>—</td><td>26 880 €</td><td>26 880 €</td><td>26 880 €</td><td>80 640 €</td></tr>
+    <tr><td><strong>Gain net</strong></td><td>—</td><td>22 280 €</td><td>22 280 €</td><td>22 280 €</td><td><strong>60 240 €</strong></td></tr>
+  </tbody>
+</table>
+<p><strong>ROI année 1 : 237 % — Retour sur investissement atteint en 3,5 mois.</strong></p>
+
+<h3>10.3 Business Cases</h3>
+
+<h4>BC-1 — Élimination de la saisie manuelle</h4>
+<p>Avant le projet, les données devaient être saisies manuellement dans BC (2h/jour, risques d'erreurs). L'automatisation totale élimine ce poste (14 400 €/an d'économie directe) et réduit le délai de disponibilité des données de "24h en retard" à "disponible à 09h05".</p>
+<p><strong>Critères de succès :</strong> taux d'erreur &lt; 0,1 % · délai de disponibilité &lt; 30 min après 09h00 · fiabilité &gt; 99 % des exécutions.</p>
+
+<h4>BC-2 — Conformité kilométrique et remboursements</h4>
+<p>Le remplacement de l'API Google Distance Matrix (estimations statiques) par le tracking GPS temps réel apporte des données réelles de trajet. Gains : 4 730 €/an (carburant précis, zéro litige kilométrique) + bénéfices qualitatifs (conformité réglementaire, sécurité conducteurs, indépendance technologique).</p>
+<p><strong>Critères de succès :</strong> couverture GPS &gt; 95 % des trajets · écart &lt; 5 % avec compteur physique · 0 litige remboursement en 6 mois.</p>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 11. PLANNING ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 11</div>
+  <h2>Planification et gestion des écarts</h2>
+</div>
+
+<h3>11.1 Résumé du planning</h3>
+
+<table>
+  <thead><tr><th>Phase</th><th>Nom</th><th>Prévu (j)</th><th>Réalisé (j)</th><th>Écart (j)</th><th>Écart %</th></tr></thead>
+  <tbody>
+    <tr><td>P1</td><td>Conception et architecture</td><td>3,0</td><td>3,5</td><td><span class="badge badge-orange">+0,5</span></td><td>+17 %</td></tr>
+    <tr><td>P2</td><td>Infrastructure et schéma</td><td>1,0</td><td>1,0</td><td><span class="badge badge-green">0</span></td><td>0 %</td></tr>
+    <tr><td>P3</td><td>Développement AL Extension</td><td>4,0</td><td>5,25</td><td><span class="badge badge-orange">+1,25</span></td><td>+31 %</td></tr>
+    <tr><td>P4</td><td>Développement n8n Workflows</td><td>3,0</td><td>4,25</td><td><span class="badge badge-orange">+1,25</span></td><td>+42 %</td></tr>
+    <tr><td>P5</td><td>Apache Hop</td><td>2,0</td><td>2,0</td><td><span class="badge badge-green">0</span></td><td>0 %</td></tr>
+    <tr><td>P6</td><td>Tests et validation</td><td>2,0</td><td>2,5</td><td><span class="badge badge-orange">+0,5</span></td><td>+25 %</td></tr>
+    <tr><td>P7</td><td>Documentation</td><td>2,0</td><td>1,75</td><td><span class="badge badge-green">-0,25</span></td><td>-13 %</td></tr>
+    <tr><td colspan="2"><strong>Total</strong></td><td><strong>17,0</strong></td><td><strong>19,75</strong></td><td><strong>+2,75</strong></td><td><strong>+16 %</strong></td></tr>
+  </tbody>
+</table>
+
+<h3>11.2 Analyse des causes d'écart</h3>
+
+<table>
+  <thead><tr><th>Phase</th><th>Cause</th><th>Action corrective</th></tr></thead>
+  <tbody>
+    <tr><td>P1 (+0,5 j)</td><td>Format GPS mal anticipé : format <code>session_end</code> → <code>distance_update</code> incrémental après clarification</td><td>Clarification avant développement WF-04B, refonte de l'architecture dim_distances</td></tr>
+    <tr><td>P3 (+1,25 j)</td><td>1) Architecture AL incorrecte → refactorisation vers Codeunit centralisé + tables lean. 2) Pages API OData absentes : BC n'expose pas <code>PageType=List</code> via OData — ajout de 6 pages <code>PageType=API</code>. 3) Conflit GUID lors de l'upgrade (tables 50100→50200) → nouvel GUID d'extension</td><td>Extension v2.0.0.0 avec nouvel GUID, 6 pages API ajoutées (50206–50213)</td></tr>
+    <tr><td>P4 (+1,25 j)</td><td>1) Clés composées BC non anticipées → pattern GET-filter + architecture hybride 3 triggers. 2) Bugs découverts lors de la validation : champ <code>customerId</code>→<code>customerNo</code> (08C), dates hors plage licence (08D), <code>$vars</code> non disponibles (08E/08F), colonne manquante <code>line_no</code> (08F), dépassement <code>Code[10]</code> pour country (08F)</td><td>5 corrections appliquées via l'API n8n, tous les workflows validés</td></tr>
+    <tr><td>P6 (+0,5 j)</td><td>Tests end-to-end révèlent 5 anomalies n8n non détectées lors des tests unitaires : mapping de champs incorrect, contraintes de type BC, restriction de la licence sur les plages de dates</td><td>Protocole enrichi de 5 cas de test supplémentaires (TC-27 à TC-31)</td></tr>
+    <tr><td>P7 (-0,25 j)</td><td>Schémas ASCII déjà disponibles depuis la phase conception</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<h3>11.3 Enseignements</h3>
+<ul>
+  <li><strong>Valider le format source en amont</strong> avant tout développement de pipeline de réception</li>
+  <li><strong>Identifier les clés composées BC</strong> dès la phase de conception pour anticiper le pattern GET-filter</li>
+  <li><strong>La séparation stricte des projets</strong> (ETL_Projet vs ETL_Projet_BC) s'est avérée essentielle pour la présentation</li>
+  <li><strong>L'architecture sous-workflow</strong> a rendu les tests très modulaires et facilité le débogage</li>
+  <li><strong>BC OData nécessite <code>PageType = API</code></strong> — les pages Liste ne sont pas accessibles via OData ; à vérifier dès la phase de conception AL</li>
+  <li><strong>Vérifier les contraintes de type BC</strong> — <code>Code[10]</code>, <code>Code[20]</code>, plage de dates licence — avant de mapper les colonnes Gold vers les champs BC</li>
+  <li><strong>Les tests unitaires n8n ne suffisent pas</strong> — les erreurs de mapping de champs (400 BadRequest BC) ne se manifestent qu'en test d'intégration end-to-end</li>
+</ul>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ 12. CONCLUSION ════════════════════════════ -->
+<div class="section-header">
+  <div class="section-num">Section 12</div>
+  <h2>Conclusion</h2>
+</div>
+
+<p>Le projet ETL_Projet_BC atteint l'intégralité de ses objectifs initiaux. Les six tables Gold sont synchronisées quotidiennement vers Business Central avec une garantie d'idempotence, les données GPS temps réel remplacent les estimations statiques Google Distance Matrix, et l'extension AL fournit un tableau de bord de supervision opérationnel.</p>
+
+<p>L'architecture choisie — médaillon étendue avec webhook GPS, pipelines Apache Hop, orchestrateur n8n hybride et API OData AL — présente plusieurs qualités structurantes :</p>
+<ul>
+  <li><strong>Modularité :</strong> chaque table est synchronisée par un sous-workflow indépendant, facilement modifiable ou testable isolément</li>
+  <li><strong>Résilience :</strong> une erreur sur un enregistrement ne bloque pas le traitement des suivants ; le schedule assure la récupération automatique</li>
+  <li><strong>Conformité RGPD :</strong> les coordonnées GPS ne sont jamais persistées — seules les métriques agrégées transitent vers Gold et BC</li>
+  <li><strong>Sécurité :</strong> webhook protégé par clé API, communications BC via proxy NTLM, credentials dans des variables d'environnement chiffrées</li>
+  <li><strong>ROI démontré :</strong> retour sur investissement atteint en 3,5 mois, gain net de 60 240 € sur 3 ans</li>
+</ul>
+
+<p>Les axes d'amélioration identifiés pour la suite concernent la pagination incrémentale sur <code>fact_ecommerce_lines</code> (actuellement limitée à 10 000 lignes), la mise en place d'alertes automatiques en cas d'échec de WF-08, et le déploiement optionnel du TLS via nginx pour les communications GPS.</p>
+
+<div class="box box-ok">
+  <div class="box-title">Bilan de livraison</div>
+  32 fichiers livrés · 31/31 tests passés · 0 fichier du projet ETL_Projet modifié · Infrastructure opérationnelle · Webhook GPS sécurisé · Synchronisation Gold→BC validée end-to-end (6/6 tables, 10 606 enregistrements dans BC) · Documentation complète en 9 documents
+</div>
+
+<div class="page-break"></div>
+
+<!-- ════════════════════════════ ANNEXES ════════════════════════════ -->
+<div class="annexe-title">Annexe A — Inventaire complet des livrables</div>
+
+<table>
+  <thead><tr><th>Chemin</th><th>Type</th><th>Description</th></tr></thead>
+  <tbody>
+    <tr><td>schema_gold_updates.sql</td><td>SQL</td><td>Migration schéma Gold (dim_distances GPS, silver.distance_matrix)</td></tr>
+    <tr><td>al_etl_extension/app.json</td><td>AL</td><td>Manifeste extension BC v2.0.0.0, plage ID 50200–50215</td></tr>
+    <tr><td>al_etl_extension/src/Codeunit50210.ETLBCImportManager.al</td><td>AL</td><td>Toute la logique BC (upsert, trigger, comptage)</td></tr>
+    <tr><td>al_etl_extension/src/Table5020X.*.al (×6)</td><td>AL</td><td>Tables BC lean (données uniquement)</td></tr>
+    <tr><td>al_etl_extension/src/Page50211.ETLBCDashboard.al</td><td>AL</td><td>Dashboard supervision BC</td></tr>
+    <tr><td>al_etl_extension/src/Page5020X.*.al (×6)</td><td>AL</td><td>Pages liste lecture seule</td></tr>
+    <tr><td>al_etl_extension/src/APIPage50206–50209,50212–50213.al (×6)</td><td>AL</td><td>Pages API OData — <code>etlShipmentHeaders, etlDistances, etlShipmentLines, etlEcommerceLines, etlCustomers, etlArticles</code></td></tr>
+    <tr><td>n8n/workflows/04b_distance_webhook.json</td><td>n8n</td><td>WF-04B — réception GPS + CDC + MinIO (v2 sécurisé)</td></tr>
+    <tr><td>n8n/workflows/08_gold_to_bc.json</td><td>n8n</td><td>WF-08 — orchestrateur hybride (3 triggers)</td></tr>
+    <tr><td>n8n/workflows/08a à 08f_sync_*.json (×6)</td><td>n8n</td><td>Sous-workflows de synchronisation par table</td></tr>
+    <tr><td>apache_hop_data/pipelines/silver/05_silver_distances.hpl</td><td>Hop</td><td>Pipeline Bronze→Silver distances GPS</td></tr>
+    <tr><td>apache_hop_data/pipelines/gold/05_dim_distances.hpl</td><td>Hop</td><td>Pipeline Silver→Gold distances GPS (typage)</td></tr>
+    <tr><td>docs/cahier_des_charges.md</td><td>Doc</td><td>CDC complet (9 sections)</td></tr>
+    <tr><td>docs/specifications_fonctionnelles.md</td><td>Doc</td><td>Specs (6 UC, 8 RM, dictionnaire 6 tables)</td></tr>
+    <tr><td>docs/choix_methode_acces.md</td><td>Doc</td><td>Comparaison 4 méthodes, justification OData</td></tr>
+    <tr><td>docs/documentation_technique.md</td><td>Doc</td><td>Schémas architecture, topologie, flux, AL, Hop</td></tr>
+    <tr><td>docs/analyse_risques_couts.md</td><td>Doc</td><td>15 risques, TCO 3 ans, ROI, 2 business cases</td></tr>
+    <tr><td>docs/planification_ecarts.md</td><td>Doc</td><td>7 phases, 37 tâches, écarts, actions correctives</td></tr>
+    <tr><td>docs/protocole_tests.md</td><td>Doc</td><td>21 cas de test, 100 % passés</td></tr>
+    <tr><td>docs/guide_reseau_webhook.md</td><td>Doc</td><td>URL webhook, sécurité, nginx TLS, checklist</td></tr>
+  </tbody>
+</table>
+
+<div class="annexe-title" style="margin-top:0.8cm">Annexe B — Dictionnaire des données (résumé)</div>
+
+<table>
+  <thead><tr><th>Table Gold</th><th>Entité BC</th><th>Clé primaire</th><th>Champs clés</th></tr></thead>
+  <tbody>
+    <tr><td>dim_customers</td><td>etlCustomers</td><td>customer_id</td><td>name, country, post_code, location_code, currency_code, salesperson_code</td></tr>
+    <tr><td>dim_articles</td><td>etlArticles</td><td>article_id</td><td>description, unit_of_measure, type, item_category, unit_price, unit_cost, costing_method</td></tr>
+    <tr><td>dim_shipment_headers</td><td>etlShipmentHeaders</td><td>header_id</td><td>customer_id, order_no, shipment_date, ship_to_city, ship_to_country</td></tr>
+    <tr><td>dim_distances</td><td>etlDistances</td><td>session_id</td><td>session_date, total_distance_km, total_distance_meters, max_speed_kmh, avg_speed_kmh, total_active_seconds, event_count, first/last_event_at</td></tr>
+    <tr><td>fact_shipment_lines</td><td>etlShipmentLines</td><td>document_no + line_no</td><td>article_id, quantity, location_code</td></tr>
+    <tr><td>fact_ecommerce_lines</td><td>etlEcommerceLines</td><td>invoice_no + line_no</td><td>stock_code, description, quantity, unit_price, total_amount, customer_id, country, invoice_date</td></tr>
+  </tbody>
+</table>
+
+<div class="annexe-title" style="margin-top:0.8cm">Annexe C — Glossaire</div>
+
+<table>
+  <thead><tr><th>Terme</th><th>Définition</th></tr></thead>
+  <tbody>
+    <tr><td><strong>ETL</strong></td><td>Extract, Transform, Load — processus d'extraction, transformation et chargement de données</td></tr>
+    <tr><td><strong>Médaillon</strong></td><td>Architecture en couches : Bronze (brut) → Silver (nettoyé) → Gold (agrégé)</td></tr>
+    <tr><td><strong>OData</strong></td><td>Open Data Protocol — standard REST utilisé par l'API Business Central</td></tr>
+    <tr><td><strong>Upsert</strong></td><td>Opération combinant INSERT (si absent) et UPDATE (si existant)</td></tr>
+    <tr><td><strong>CDC</strong></td><td>Change Data Capture — détection des modifications par comparaison de hash MD5</td></tr>
+    <tr><td><strong>session_id</strong></td><td>Identifiant unique d'une session GPS — timestamp Unix en millisecondes</td></tr>
+    <tr><td><strong>distance_update</strong></td><td>Type d'événement JSON envoyé par l'application GPS à chaque intervalle de mesure</td></tr>
+    <tr><td><strong>NTLM</strong></td><td>NT LAN Manager — protocole d'authentification Windows utilisé par BC OnPrem</td></tr>
+    <tr><td><strong>TCO</strong></td><td>Total Cost of Ownership — coût total de possession sur une durée donnée</td></tr>
+    <tr><td><strong>ROI</strong></td><td>Return on Investment — retour sur investissement</td></tr>
+    <tr><td><strong>AL</strong></td><td>Application Language — langage de développement de Microsoft Business Central</td></tr>
+    <tr><td><strong>RGPD / LPD</strong></td><td>Règlement Général sur la Protection des Données (UE) / Loi sur la Protection des Données (Suisse)</td></tr>
+  </tbody>
+</table>
+
+<div class="annexe-title" style="margin-top:0.8cm">Annexe D — Références</div>
+
+<ul>
+  <li>Microsoft — <em>Business Central AL Language Documentation</em>, docs.microsoft.com/dynamics365/business-central/dev-itpro/developer</li>
+  <li>Microsoft — <em>Business Central API v2.0 Reference</em>, docs.microsoft.com/dynamics365/business-central/dev-itpro/api-reference</li>
+  <li>n8n — <em>Workflow Automation Documentation</em>, docs.n8n.io</li>
+  <li>Apache Hop — <em>Pipeline Documentation</em>, hop.apache.org/manual</li>
+  <li>MinIO — <em>S3-Compatible Object Storage</em>, min.io/docs</li>
+  <li>OData — <em>Open Data Protocol v4.0 Specification</em>, odata.org/documentation</li>
+  <li>CNIL — <em>RGPD : Guide pratique de la mise en conformité</em>, cnil.fr/fr/rgpd-de-quoi-parle-t-on</li>
+  <li>PPDT — <em>Loi fédérale sur la protection des données (LPD)</em>, fedlex.admin.ch</li>
+</ul>
+
+<div class="colophon">
+  Rapport généré le 4 juin 2026 &nbsp;·&nbsp; ETL_Projet_BC v3.0.0 &nbsp;·&nbsp; Auteur : Kodzo Nyanu &nbsp;·&nbsp; Document confidentiel
+</div>
+
+</body>
+</html>

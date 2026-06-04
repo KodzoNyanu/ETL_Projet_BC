@@ -1,0 +1,25 @@
+{
+  "id": "33698808-6cdf-4761-a9ea-b3a38e9171c4",
+  "name": "ETL Pipeline Warehouse",
+  "publisher": "etlpipeline",
+  "version": "2.0.0.0",
+  "brief": "Integration GPS distance + 6 tables Gold → Business Central",
+  "description": "Extension BC pour la synchronisation des 6 tables Gold (distances GPS temps réel incluses) vers Business Central via OData API.",
+  "privacyStatement": "",
+  "EULA": "",
+  "help": "",
+  "url": "",
+  "logo": "",
+  "dependencies": [],
+  "screenshots": [],
+  "platform": "1.0.0.0",
+  "application": "26.0.0.0",
+  "idRanges": [
+    {
+      "from": 50200,
+      "to": 50215
+    }
+  ],
+  "target": "OnPrem",
+  "runtime": "13.0"
+}
