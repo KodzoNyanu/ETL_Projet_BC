@@ -268,6 +268,31 @@ codeunit 50210 "ETL BC Import Manager"
     end;
 
     // =========================================================================
+    //  MISE À JOUR TEMPS RÉEL — distance GPS depuis l'app mobile (via n8n)
+    //  Appelé par : Page 50206 "ETL BC Update Distance API"
+    // =========================================================================
+    procedure UpsertDistanceRealtime(SessionIdVal: Text[50]; NewDistanceKm: Decimal)
+    var
+        DistRec: Record "ETL BC Distance";
+    begin
+        if NewDistanceKm < 0 then
+            Error('Distance invalide : la valeur ne peut pas être négative.');
+
+        DistRec.LockTable();
+
+        if DistRec.Get(SessionIdVal) then begin
+            DistRec."Total Distance Km" := NewDistanceKm;
+            DistRec."ETL Loaded At"     := CurrentDateTime();
+            DistRec.Modify(true);
+        end else begin
+            DistRec."Session Id"        := SessionIdVal;
+            DistRec."Total Distance Km" := NewDistanceKm;
+            DistRec."ETL Loaded At"     := CurrentDateTime();
+            DistRec.Insert(true);
+        end;
+    end;
+
+    // =========================================================================
     //  UTILITAIRE — retourne le nombre d'enregistrements par table
     // =========================================================================
     procedure GetRecordCount(TableName: Text[50]) : Integer
