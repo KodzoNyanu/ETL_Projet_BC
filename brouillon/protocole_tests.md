@@ -79,12 +79,12 @@
 | **Type** | Test fonctionnel |
 | **Priorité** | Haute |
 
-**Préconditions :** WF-04B actif ; `/staging/enrichment/distances_realtime.json` vide ou existant
+**Préconditions :** WF-04B actif ; `/staging/distances/distances_realtime.json` vide ou existant
 
 **Étapes :**
 1. Envoyer POST vers `http://172.18.0.5:5678/webhook/distance-update` avec le payload de test
 2. Vérifier le code de réponse HTTP
-3. Lire le fichier `/staging/enrichment/distances_realtime.json`
+3. Lire le fichier `/staging/distances/distances_realtime.json`
 4. Vérifier la présence de la session `TEST-SESSION-001`
 
 **Résultat attendu :**
@@ -175,7 +175,7 @@
 
 **Étapes :**
 1. Envoyer un événement avec des coordonnées GPS réelles
-2. Lire le fichier `/staging/enrichment/distances_realtime.json`
+2. Lire le fichier `/staging/distances/distances_realtime.json`
 3. Rechercher les champs `latitude`, `longitude`, `accuracy_meters`
 
 **Résultat attendu :** Aucun champ de localisation GPS présent dans le fichier de staging ou dans MinIO.

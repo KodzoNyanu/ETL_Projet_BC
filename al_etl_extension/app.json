@@ -2,7 +2,7 @@
   "id": "33698808-6cdf-4761-a9ea-b3a38e9171c4",
   "name": "ETL Pipeline Warehouse",
   "publisher": "etlpipeline",
-  "version": "2.1.0.0",
+  "version": "2.2.0.0",
   "brief": "Integration GPS distance + 6 tables Gold \u2192 Business Central",
   "description": "Extension BC pour la synchronisation des 6 tables Gold (distances GPS temps r\u00e9el incluses) vers Business Central via OData API.",
   "privacyStatement": "",

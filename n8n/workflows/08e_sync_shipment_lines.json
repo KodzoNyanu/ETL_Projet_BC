@@ -1,6 +1,6 @@
 {
   "id": "wf08e-sync-shiplines-v1",
-  "name": "08E - Sync fact_shipment_lines → BC",
+  "name": "08E - Sync salesshipmentline → BC (JSON staging)",
   "active": true,
   "nodes": [
     {
@@ -8,28 +8,58 @@
       "name": "Déclencheur sous-workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [100, 300],
+      "position": [
+        100,
+        300
+      ],
       "parameters": {}
     },
     {
       "id": "code-08e-001",
-      "name": "Sync fact_shipment_lines → BC",
+      "name": "Sync salesshipmentline → BC",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [360, 300],
+      "position": [
+        360,
+        300
+      ],
       "parameters": {
-        "jsCode": "const { Client } = require('pg');\nconst http = require('http');\n\nconst PG      = { host:'172.18.0.4', port:5432, database:'data_warehouse_gold', user:'nyanu', password:'nyanu', connectionTimeoutMillis:10000 };\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = $vars.BC_COMPANY_ID || '00000000-0000-0000-0000-000000000000';\nconst ENTITY  = 'etlShipmentLines';\nconst NOW     = new Date().toISOString();\n\nfunction bcReq(method, path, body) {\n  return new Promise((resolve, reject) => {\n    const pl = body ? JSON.stringify(body) : null;\n    const req = http.request({\n      hostname: PROXY, port: PORT,\n      path: `${BASE}/companies(${COMPANY})/${path}`,\n      method,\n      headers: {\n        'Content-Type': 'application/json', 'Accept': 'application/json',\n        ...(pl ? { 'Content-Length': Buffer.byteLength(pl) } : {}),\n        ...(method === 'PATCH' ? { 'If-Match': '*' } : {})\n      }\n    }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve({status:res.statusCode,body:d})); });\n    req.on('error', reject);\n    if (pl) req.write(pl);\n    req.end();\n  });\n}\n\n// Compound key: documentNo + lineNo separated by '|'\nasync function upsert(documentNo, lineNo, data) {\n  const r = await bcReq('POST', ENTITY, data);\n  if (r.status === 201 || r.status === 200) return { action:'inserted', key:`${documentNo}|${lineNo}`, status:r.status };\n  if (r.status === 409 || r.status === 422) {\n    const filter = `documentNo eq '${encodeURIComponent(documentNo)}' and lineNo eq ${lineNo}`;\n    const lookup = await bcReq('GET', `${ENTITY}?$filter=${filter}&$select=id`);\n    let bcId = null;\n    try { bcId = JSON.parse(lookup.body).value?.[0]?.id; } catch(e) {}\n    if (bcId) {\n      const r2 = await bcReq('PATCH', `${ENTITY}(${bcId})`, data);\n      return { action:'updated', key:`${documentNo}|${lineNo}`, status:r2.status };\n    }\n    return { action:'error', key:`${documentNo}|${lineNo}`, status:409, detail:'record not found for PATCH' };\n  }\n  return { action:'error', key:`${documentNo}|${lineNo}`, status:r.status, detail:r.body.substring(0,200) };\n}\n\nconst client = new Client(PG);\nawait client.connect();\nconst res = await client.query(`\n  SELECT document_no, line_no, article_id, quantity, location_code\n  FROM fact_shipment_lines\n`);\nawait client.end();\n\nconst results = [];\nfor (const row of res.rows) {\n  const r = await upsert(row.document_no, row.line_no, {\n    documentNo: row.document_no||'',\n    lineNo: parseInt(row.line_no)||0,\n    articleId: row.article_id||'',\n    quantity: parseFloat(row.quantity)||0,\n    locationCode: row.location_code||'',\n    etlLoadedAt: NOW\n  });\n  results.push(r);\n}\nconst inserted = results.filter(r=>r.action==='inserted').length;\nconst updated  = results.filter(r=>r.action==='updated').length;\nconst errors   = results.filter(r=>r.action==='error').length;\nconsole.log(`[WF-08E] fact_shipment_lines → BC: ${inserted} inserts | ${updated} updates | ${errors} errors`);\nreturn [{ json: { table:'fact_shipment_lines', total:results.length, inserted, updated, errors } }];"
+        "jsCode": "const fs   = require('fs');\nconst http = require('http');\n\nconst STAGING_FILE = '/staging/bc/database/salesshipmentline.json';\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = 'e6317465-9a3f-f011-be59-6045bde988e7';\nconst ENTITY  = 'etlShipmentLines';\nconst NOW     = new Date().toISOString();\n\nfunction bcReq(method, path, body) {\n  return new Promise((resolve, reject) => {\n    const pl = body ? JSON.stringify(body) : null;\n    const req = http.request({\n      hostname: PROXY, port: PORT,\n      path: `${BASE}/companies(${COMPANY})/${path}`,\n      method,\n      headers: {\n        'Content-Type': 'application/json', 'Accept': 'application/json',\n        ...(pl ? { 'Content-Length': Buffer.byteLength(pl) } : {}),\n        ...(method === 'PATCH' ? { 'If-Match': '*' } : {})\n      }\n    }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve({status:res.statusCode,body:d})); });\n    req.on('error', reject);\n    if (pl) req.write(pl);\n    req.end();\n  });\n}\n\nasync function upsert(documentNo, lineNo, data) {\n  const r = await bcReq('POST', ENTITY, data);\n  if (r.status === 201 || r.status === 200) return { action:'inserted', key:`${documentNo}|${lineNo}`, status:r.status };\n  const isConflict = r.status===409 || r.status===422 || (r.status===400 && r.body.includes('EntityWithSameKey'));\n  if (isConflict) {\n    const r2 = await bcReq('PATCH', `${ENTITY}(documentNo='${encodeURIComponent(documentNo)}',lineNo=${lineNo})`, data);\n    return { action:'updated', key:`${documentNo}|${lineNo}`, status:r2.status };\n  }\n  return { action:'error', key:`${documentNo}|${lineNo}`, status:r.status, detail:r.body.substring(0,200) };\n}\n\nlet staging;\ntry {\n  staging = JSON.parse(fs.readFileSync(STAGING_FILE, 'utf8'));\n} catch(e) {\n  console.log('[WF-08E] Fichier staging absent — aucune ligne expedition a synchroniser');\n  return [{ json: { table:'etlShipmentLines', total:0, inserted:0, updated:0, errors:0 } }];\n}\n\nconst rows = staging.data || [];\nif (rows.length === 0) {\n  return [{ json: { table:'etlShipmentLines', total:0, inserted:0, updated:0, errors:0 } }];\n}\n\nconst results = [];\nfor (const row of rows) {\n  const r = await upsert(row.document_no, row.line_no, {\n    documentNo:   row.document_no          || '',\n    lineNo:       parseInt(row.line_no)    || 0,\n    articleId:    row.article_id           || '',\n    quantity:     parseFloat(row.quantity) || 0,\n    locationCode: row.location_code        || '',\n    etlLoadedAt:  NOW\n  });\n  results.push(r);\n}\nconst inserted = results.filter(r=>r.action==='inserted').length;\nconst updated  = results.filter(r=>r.action==='updated').length;\nconst errors   = results.filter(r=>r.action==='error').length;\nconsole.log(`[WF-08E] salesshipmentline JSON -> BC: ${inserted} inserts | ${updated} updates | ${errors} errors`);\nreturn [{ json: { table:'etlShipmentLines', total:results.length, inserted, updated, errors } }];"
       }
     }
   ],
   "connections": {
     "Déclencheur sous-workflow": {
-      "main": [[{ "node": "Sync fact_shipment_lines → BC", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Sync salesshipmentline → BC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": { "executionOrder": "v1" },
-  "staticData": null, "meta": null, "pinData": {},
-  "versionId": "a1b2c3d4-0008-000e-b001-000000000001",
-  "activeVersionId": "a1b2c3d4-0008-000e-b001-000000000001",
-  "tags": [{ "name": "gold" }, { "name": "business-central" }, { "name": "sous-workflow" }]
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "a1b2c3d4-0008-000e-b003-000000000001",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "tags": [
+    {
+      "name": "business-central"
+    },
+    {
+      "name": "sous-workflow"
+    },
+    {
+      "name": "json-direct"
+    }
+  ]
 }

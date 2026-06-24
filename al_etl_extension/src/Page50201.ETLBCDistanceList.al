@@ -14,6 +14,7 @@ page 50201 "ETL BC Distance List"
             repeater(Sessions)
             {
                 field("Session Id"; Rec."Session Id") { ApplicationArea = All; }
+                field("Real Session Date"; Rec."Real Session Date") { ApplicationArea = All; }
                 field("Session Date"; Rec."Session Date") { ApplicationArea = All; }
                 field("Total Distance Km"; Rec."Total Distance Km")
                 {

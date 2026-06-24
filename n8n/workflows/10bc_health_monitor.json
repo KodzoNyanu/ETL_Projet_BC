@@ -1,0 +1,274 @@
+{
+  "id": "wf10bc-health-monitor-v1",
+  "name": "10BC - Health Monitor BC + Alertes Gmail",
+  "active": true,
+  "nodes": [
+    {
+      "id": "wf10bc-schedule-001",
+      "name": "Schedule 30min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        100,
+        200
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/30 * * * *"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "wf10bc-webhook-001",
+      "name": "Webhook health-check",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        360
+      ],
+      "webhookId": "health-check-bc",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "health-check-bc",
+        "responseMode": "onReceived",
+        "options": {
+          "responseData": "{\"status\":\"check lancé\"}",
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "wf10bc-monitor-001",
+      "name": "Monitorer BC + Gold",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const { Client } = require('pg');\nconst http = require('http');\n\nconst PG = { host: '172.18.0.4', port: 5432, database: 'data_warehouse_gold', user: 'nyanu', password: 'nyanu', connectionTimeoutMillis: 10000 };\nconst PROXY = '172.18.0.8';\nconst PROXY_PORT = 3128;\nconst BC_PATH = '/BC260/api/etlpipeline/warehouse/v1.0/companies(e6317465-9a3f-f011-be59-6045bde988e7)/etlCustomers?$top=1';\n\n// 1. Ping BC API\nconst bc_start = Date.now();\nlet bc_ok = false, bc_error = null, bc_latency_ms = 0;\ntry {\n  const status = await new Promise((resolve, reject) => {\n    const req = http.request(\n      { hostname: PROXY, port: PROXY_PORT, path: BC_PATH, method: 'GET',\n        headers: { Accept: 'application/json' }, timeout: 10000 },\n      res => { res.resume(); res.on('end', () => resolve(res.statusCode)); }\n    );\n    req.on('error', reject);\n    req.on('timeout', () => { req.destroy(); reject(new Error('Timeout 10s')); });\n    req.end();\n  });\n  bc_ok = status < 500;\n  if (!bc_ok) bc_error = `HTTP ${status}`;\n} catch(e) {\n  bc_error = e.message;\n}\nbc_latency_ms = Date.now() - bc_start;\n\n// 2. Vérifier dernière sync Gold\nconst pg = new Client(PG);\nawait pg.connect();\nlet sync_ok = false, hours_ago = 99, last_sync = null, last_alert_at = null;\ntry {\n  await pg.query(`\n    CREATE TABLE IF NOT EXISTS bc_gold.incident_log (\n      id SERIAL PRIMARY KEY,\n      checked_at TIMESTAMPTZ DEFAULT NOW(),\n      bc_ok BOOLEAN, bc_latency_ms INTEGER, bc_error TEXT,\n      sync_ok BOOLEAN, hours_since_sync NUMERIC(6,2),\n      alert_sent BOOLEAN DEFAULT false, resolved BOOLEAN DEFAULT false\n    )`);\n\n  const syncRes = await pg.query(`\n    SELECT MAX(extracted_at) AS last_sync,\n           EXTRACT(EPOCH FROM (NOW() - MAX(extracted_at)))/3600 AS hours_ago\n    FROM bc_gold.customers`);\n  last_sync = syncRes.rows[0].last_sync;\n  hours_ago = parseFloat(syncRes.rows[0].hours_ago || 99);\n  sync_ok = hours_ago < 26;\n\n  // Anti-spam: ne pas alerter si déjà alerté dans les 2h\n  const lastAlertRes = await pg.query(`\n    SELECT checked_at FROM bc_gold.incident_log\n    WHERE alert_sent = true\n      AND (bc_ok = false OR sync_ok = false)\n      AND checked_at > NOW() - INTERVAL '2 hours'\n    ORDER BY checked_at DESC LIMIT 1`);\n  last_alert_at = lastAlertRes.rows[0]?.checked_at || null;\n} finally {\n  await pg.end();\n}\n\nconst needs_alert = (!bc_ok || !sync_ok) && !last_alert_at;\nconst now = new Date().toISOString();\n\nconsole.log(`[WF-10BC] BC=${bc_ok?'OK':'KO'} ${bc_latency_ms}ms | Sync=${sync_ok?'OK':'KO'} (${hours_ago.toFixed(1)}h) | Alert=${needs_alert}`);\n\nreturn [{ json: { bc_ok, bc_error, bc_latency_ms, sync_ok, hours_ago, last_sync, needs_alert, now, last_alert_at } }];"
+      }
+    },
+    {
+      "id": "wf10bc-if-001",
+      "name": "Alerte nécessaire ?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        600,
+        280
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "cond-alert",
+              "leftValue": "={{ $json.needs_alert }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "wf10bc-gmail-001",
+      "name": "Gmail — Alerte BC KO",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        180
+      ],
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst { Client } = require('pg');\nconst PG = { host: '172.18.0.4', port: 5432, database: 'data_warehouse_gold', user: 'nyanu', password: 'nyanu' };\nconst msg = [\n  '[WF-10BC] 🚨 ALERTE — Intervention requise',\n  'BC=' + (d.bc_ok ? 'OK' : 'KO') + (d.bc_error ? ' (' + d.bc_error + ')' : '') + ' | Latence=' + d.bc_latency_ms + 'ms',\n  'Sync=' + (d.sync_ok ? 'OK' : 'RETARD ' + d.hours_ago?.toFixed(1) + 'h'),\n  'Heure: ' + d.now,\n  'Actions: curl -X POST http://172.18.0.5:5678/webhook/run-gold-to-bc'\n].join(' | ');\nconsole.warn(msg);\n// Écrire dans le log PostgreSQL\nconst pg = new Client(PG);\ntry {\n  await pg.connect();\n  await pg.query(\n    'INSERT INTO bc_gold.incident_log (bc_ok,bc_latency_ms,bc_error,sync_ok,hours_since_sync,alert_sent) VALUES ($1,$2,$3,$4,$5,true)',\n    [d.bc_ok, d.bc_latency_ms, d.bc_error||null, d.sync_ok, parseFloat((d.hours_ago||0).toFixed(2))]\n  );\n} finally { try { await pg.end(); } catch(_) {} }\nreturn [{ json: { ...d, alert_logged: true, alert_channel: 'console+postgres' } }];"
+      }
+    },
+    {
+      "id": "wf10bc-log-alerte-001",
+      "name": "Logger incident (alerte)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        180
+      ],
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nreturn [{ json: { ...input, alert_sent: true } }];"
+      }
+    },
+    {
+      "id": "wf10bc-log-ok-001",
+      "name": "Logger statut OK",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        380
+      ],
+      "parameters": {
+        "jsCode": "return [{ json: { ...$input.first().json, alert_sent: false } }];"
+      }
+    },
+    {
+      "id": "wf10bc-pg-log-001",
+      "name": "Écrire bc_gold.incident_log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1320,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const { Client } = require('pg');\nconst PG = { host: '172.18.0.4', port: 5432, database: 'data_warehouse_gold', user: 'nyanu', password: 'nyanu' };\n\nconst d = $('Monitorer BC + Gold').first().json;\nconst alertSent = $input.first().json?.alert_sent ?? false;\n\nconst pg = new Client(PG);\nawait pg.connect();\ntry {\n  await pg.query(\n    `INSERT INTO bc_gold.incident_log (bc_ok, bc_latency_ms, bc_error, sync_ok, hours_since_sync, alert_sent)\n     VALUES ($1,$2,$3,$4,$5,$6)`,\n    [d.bc_ok, d.bc_latency_ms, d.bc_error, d.sync_ok,\n     parseFloat(d.hours_ago.toFixed(2)), alertSent]\n  );\n  console.log(`[WF-10BC] Incident logué | alert_sent=${alertSent}`);\n} finally {\n  await pg.end();\n}\nreturn [{ json: { logged: true, ...d } }];"
+      }
+    },
+    {
+      "id": "wf10bc-summary-001",
+      "name": "Résumé monitoring",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1560,
+        280
+      ],
+      "parameters": {
+        "jsCode": "const d = $('Monitorer BC + Gold').first().json;\nconst status = (d.bc_ok && d.sync_ok) ? '✅ SAIN' : '🚨 PROBLÈME';\nconsole.log(`[WF-10BC] Check terminé: ${status} | BC=${d.bc_ok} | Sync=${d.sync_ok} (${d.hours_ago?.toFixed(1)}h)`);\nreturn [{ json: { status, ...d } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Schedule 30min": {
+      "main": [
+        [
+          {
+            "node": "Monitorer BC + Gold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook health-check": {
+      "main": [
+        [
+          {
+            "node": "Monitorer BC + Gold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Monitorer BC + Gold": {
+      "main": [
+        [
+          {
+            "node": "Alerte nécessaire ?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alerte nécessaire ?": {
+      "main": [
+        [
+          {
+            "node": "Gmail — Alerte BC KO",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Logger statut OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gmail — Alerte BC KO": {
+      "main": [
+        [
+          {
+            "node": "Logger incident (alerte)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logger incident (alerte)": {
+      "main": [
+        [
+          {
+            "node": "Écrire bc_gold.incident_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Logger statut OK": {
+      "main": [
+        [
+          {
+            "node": "Écrire bc_gold.incident_log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Écrire bc_gold.incident_log": {
+      "main": [
+        [
+          {
+            "node": "Résumé monitoring",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "a1b2c3d4-e5f6-0010-b001-000000000001",
+  "activeVersionId": "a1b2c3d4-e5f6-0010-b001-000000000001",
+  "versionCounter": 1,
+  "triggerCount": 2,
+  "tags": [
+    {
+      "name": "monitoring"
+    },
+    {
+      "name": "pra"
+    },
+    {
+      "name": "etl-projet-bc"
+    }
+  ]
+}

@@ -6,8 +6,8 @@
 | Champ        | Valeur                                          |
 |--------------|-------------------------------------------------|
 | **Projet**   | ETL_Projet_BC — Intégration Data Warehouse → BC |
-| **Version**  | 2.0.0                                           |
-| **Date**     | 2026-06-04                                      |
+| **Version**  | 2.1.0                                           |
+| **Date**     | 2026-06-12                                      |
 | **Auteur**   | Kodzo Nyanu                                     |
 
 ---
@@ -15,13 +15,13 @@
 ## Table des matières
 
 1. [Architecture globale](#1-architecture-globale)
+   - 1.3 [Structure du bucket Bronze (MinIO)](#13-structure-du-bucket-bronze-minio)
 2. [Topologie réseau](#2-topologie-réseau)
 3. [Diagrammes de flux](#3-diagrammes-de-flux)
 4. [Architecture de l'extension AL](#4-architecture-de-lextension-al)
 5. [Architecture n8n](#5-architecture-n8n)
-6. [Architecture Apache Hop](#6-architecture-apache-hop)
-7. [Schéma de la base de données Gold](#7-schéma-de-la-base-de-données-gold)
-8. [Dictionnaire technique des composants](#8-dictionnaire-technique-des-composants)
+6. [Schéma de la base de données Gold](#6-schéma-de-la-base-de-données-gold)
+7. [Dictionnaire technique des composants](#7-dictionnaire-technique-des-composants)
 
 ---
 
@@ -34,28 +34,36 @@
 ║                    ARCHITECTURE MÉDAILLON ÉTENDUE                    ║
 ╠══════════════════════════════════════════════════════════════════════╣
 ║                                                                      ║
-║  [APP GPS]           [FICHIERS CSV]        [API EXTERNES]            ║
-║  distance_update     clients, articles     (réservé)                 ║
-║       │                    │                                         ║
-║       ▼                    ▼                                         ║
-║  ┌─────────────────────────────────────────┐                        ║
-║  │          BRONZE — MinIO (S3)            │                        ║
-║  │  raw/enrichment/distances/              │                        ║
-║  │  raw/customers/, raw/articles/, ...     │                        ║
-║  └───────────────────┬─────────────────────┘                        ║
-║                      │ Apache Hop                                    ║
+║  [APP GPS]    [CSV/JSON]   [PG Windows]  [Véhicules]  [API EXT]     ║
+║  distance_    data.csv    clients,       logistics    (réservé)      ║
+║  update       data.json   articles...    JSON                        ║
+║       │           │            │             │                       ║
+║       ▼           ▼            ▼             ▼                       ║
+║  ┌─────────────────────────────────────────────────────────────┐    ║
+║  │               BRONZE — MinIO (bucket: bronze)               │    ║
+║  │  etl-projet-bc/raw/                                         │    ║
+║  │  ├─ flat_files/                                             │    ║
+║  │  │   ├─ data_csv/YYYY/MM/DD/YYYYMMDD_HHmm/data.csv         │    ║
+║  │  │   └─ data_merged.json   (CSV+JSON fusionnés)            │    ║
+║  │  ├─ database/                                               │    ║
+║  │  │   ├─ articles/latest/articles.json                       │    ║
+║  │  │   ├─ clients/latest/clients.json                         │    ║
+║  │  │   ├─ salesshipmentheader/latest/                         │    ║
+║  │  │   └─ salesshipmentline/latest/                           │    ║
+║  │  ├─ distances/                                              │    ║
+║  │  │   ├─ YYYY/MM/DD/YYYYMMDD_HHmm/distances_realtime.json   │    ║
+║  │  │   └─ latest/distances_realtime.json                      │    ║
+║  │  └─ vehicles/                                               │    ║
+║  │      ├─ gestion_logistique_vehicules_YYYY-MM-DD.json        │    ║
+║  │      └─ gestion_logistique_vehicules_latest.json            │    ║
+║  └───────────────────────┬─────────────────────────────────────┘    ║
+║                      │ n8n (lecture directe)                        ║
 ║                      ▼                                               ║
 ║  ┌─────────────────────────────────────────┐                        ║
-║  │    SILVER — PostgreSQL (silver.*)        │                        ║
-║  │  silver.distance_matrix (VARCHAR)        │                        ║
-║  └───────────────────┬─────────────────────┘                        ║
-║                      │ Apache Hop                                    ║
-║                      ▼                                               ║
-║  ┌─────────────────────────────────────────┐                        ║
-║  │    GOLD — PostgreSQL (public.*)          │                        ║
-║  │  dim_customers    dim_articles           │                        ║
-║  │  dim_shipment_headers  dim_distances     │                        ║
-║  │  fact_shipment_lines   fact_ecom_lines   │                        ║
+║  │    GOLD — PostgreSQL (bc_gold.*)         │                        ║
+║  │  clients          articles               │                        ║
+║  │  salesshipmentheader  distances          │                        ║
+║  │  salesshipmentline  (ecom via staging)   │                        ║
 ║  └───────────────────┬─────────────────────┘                        ║
 ║                      │ n8n WF-08 (OData HTTP)                       ║
 ║                      ▼                                               ║
@@ -75,13 +83,50 @@
 | Composant | Technologie | Version | Rôle |
 |-----------|-------------|---------|------|
 | Stockage Bronze | MinIO | RELEASE.2024 | Stockage objet S3-compatible |
-| Base de données | PostgreSQL | 15 | Silver + Gold |
-| Orchestrateur ETL | Apache Hop | 2.x | Pipelines Silver et Gold |
-| Orchestrateur workflows | n8n | 1.x | Réception GPS, synchro BC |
+| Base de données Gold | PostgreSQL | 15 | bc_gold — données lues par n8n |
+| Orchestrateur workflows | n8n | 2.21.7 | Réception GPS, Bronze → BC, supervision |
 | ERP | Microsoft Business Central | 26.0 OnPrem | Cible de synchronisation |
 | Extension ERP | AL Runtime | 13.0 | Tables, logique, pages |
 | Proxy NTLM | Squid / NTLM Proxy | — | Authentification BC |
 | Conteneurisation | Docker + Docker Compose | 24.x | Isolation des services |
+
+### 1.3 Structure du bucket Bronze (MinIO)
+
+Bucket : **`bronze`** — préfixe projet : `etl-projet-bc/raw/`
+
+```
+bronze/
+└─ etl-projet-bc/
+   └─ raw/
+      ├─ flat_files/                             ← Fichiers sources plats
+      │   ├─ data_csv/
+      │   │   └─ YYYY/MM/DD/YYYYMMDD_HHmm/
+      │   │       └─ data.csv                    (19 MiB, versionné par WF-01BC)
+      │   └─ data_merged.json                    (103 MiB, CSV+JSON fusionnés)
+      │
+      ├─ database/                               ← Extraits PostgreSQL Windows
+      │   ├─ articles/latest/articles.json
+      │   ├─ clients/latest/clients.json
+      │   ├─ salesshipmentheader/latest/salesshipmentheader.json
+      │   └─ salesshipmentline/latest/salesshipmentline.json
+      │
+      ├─ distances/                              ← Télémétrie GPS temps réel
+      │   ├─ YYYY/MM/DD/YYYYMMDD_HHmm/
+      │   │   └─ distances_realtime.json         (versionné à chaque événement)
+      │   └─ latest/distances_realtime.json      (dernière version)
+      │
+      └─ vehicles/                               ← Référentiel véhicules
+          ├─ gestion_logistique_vehicules_YYYY-MM-DD.json  (versionné)
+          └─ gestion_logistique_vehicules_latest.json
+```
+
+| Sous-dossier | Workflow producteur | Fréquence |
+|---|---|---|
+| `flat_files/data_csv/` | WF-01BC | À la demande / WF-08 |
+| `flat_files/data_merged.json` | WF-01BC | À la demande / WF-08 |
+| `database/*/latest/` | WF-03BC | À la demande / WF-08 |
+| `distances/` | WF-04B | Temps réel (chaque événement GPS) |
+| `vehicles/` | WF-06 | À la demande (CDC sur fichier) |
 
 ---
 
@@ -109,11 +154,6 @@
 │              │             │  port 9001 (Console)          │
 │              └──────┬──────┘                               │
 │                     │                                       │
-│  172.18.0.7  ┌─────────────┐                               │
-│  Apache Hop  │  hop-server │  port 8080                    │
-│              │  (optionnel)│                               │
-│              └──────┬──────┘                               │
-│                     │                                       │
 │  172.18.0.8  ┌─────────────┐                               │
 │  Proxy NTLM  │   proxy     │  port 3128                    │
 │              │  (Squid +   │  auth: NTLM → BC              │
@@ -139,8 +179,7 @@
 | Lecture Gold | n8n sous-workflows | PostgreSQL 172.18.0.4 | 5432 | TCP/pg |
 | Sync → BC | n8n → Proxy | BC via 172.18.0.8 | 3128 | HTTP/NTLM |
 | Trigger sync | BC Codeunit | n8n 172.18.0.5 | 5678 | HTTP POST |
-| ETL Silver | Apache Hop | PostgreSQL 172.18.0.4 | 5432 | TCP/pg |
-| ETL Gold | Apache Hop | PostgreSQL 172.18.0.4 | 5432 | TCP/pg |
+| Lecture bc_gold | n8n WF-09BC | PostgreSQL 172.18.0.4 | 5432 | TCP/pg |
 
 ---
 
@@ -176,26 +215,19 @@ n8n WF-04B — Nœud "CDC Hash"
   ▼
 n8n WF-04B — Nœud "Upload MinIO"
   │
-  ├─ Versioned : raw/enrichment/distances/YYYY/MM/DD/distances_HHmmss.json
-  └─ Latest    : raw/enrichment/distances/latest.json
+  ├─ Versioned : raw/distances/YYYY/MM/DD/YYYYMMDD_HHmm/distances_realtime.json
+  └─ Latest    : raw/distances/latest/distances_realtime.json
   │
   ▼
 Réponse HTTP 200 OK → App GPS
   │
-  │  (déclenchement manuel ou planifié)
+  │  (déclenchement via WF-04B → WF-08D automatique)
   ▼
-Apache Hop — 05_silver_distances.hpl
+WF-08D — Sync distances → BC (etlDistances OData)
   │
-  ├─ Lire /staging/enrichment/distances_realtime.json
-  ├─ Mapper champs JSON → silver.distance_matrix (VARCHAR)
-  └─ TRUNCATE + INSERT silver.distance_matrix
-  │
-  ▼
-Apache Hop — 05_dim_distances.hpl
-  │
-  ├─ Lire silver.distance_matrix
-  ├─ ScriptValueMod : parse ISO→Timestamp, VARCHAR→Decimal/Integer
-  └─ TRUNCATE + INSERT dim_distances
+  ├─ SELECT * FROM bc_gold.distances
+  ├─ POST /etlDistances → 409 → PATCH (upsert)
+  └─ return { table, total, inserted, updated, errors }
 ```
 
 ### 3.2 Flux synchronisation Gold → BC (WF-08 complet)
@@ -370,20 +402,26 @@ Pour chaque ligne PostgreSQL :
 
 | ID workflow | Nom | Déclencheurs | Rôle |
 |-------------|-----|-------------|------|
-| `wf04b-distance-realtime-v1` | WF-04B | Webhook POST | Réception GPS → MinIO |
-| `wf08-gold-to-bc-v2` | WF-08 | Webhook + Schedule + Sub | Orchestration sync Gold → BC |
-| `wf08a-sync-customers-v1` | WF-08A | executeWorkflowTrigger | dim_customers → etlCustomers |
-| `wf08b-sync-articles-v1` | WF-08B | executeWorkflowTrigger | dim_articles → etlArticles |
-| `wf08c-sync-headers-v1` | WF-08C | executeWorkflowTrigger | dim_shipment_headers → etlShipmentHeaders |
-| `wf08d-sync-distances-v1` | WF-08D | executeWorkflowTrigger | dim_distances → etlDistances |
-| `wf08e-sync-shiplines-v1` | WF-08E | executeWorkflowTrigger | fact_shipment_lines → etlShipmentLines |
-| `wf08f-sync-ecomlines-v1` | WF-08F | executeWorkflowTrigger | fact_ecommerce_lines → etlEcommerceLines |
+| `wf01bc-csv-json-minio-v1` | WF-01BC | executeWorkflowTrigger | data.csv + data.json → data_merged.json → MinIO raw/flat_files/ |
+| `wf03bc-postgres-minio-v1` | WF-03BC | executeWorkflowTrigger | PostgreSQL Windows → MinIO raw/database/ |
+| `wf04b-distance-realtime-v1` | WF-04B | Webhook POST (ngrok) | Réception GPS → MinIO raw/distances/ → WF-08D |
+| `wf06-vehicles-minio-v1` | WF-06 | Webhook POST | gestion_logistique_vehicules.json → MinIO raw/vehicles/ + bc_gold |
+| `wf08-gold-to-bc-v2` | WF-08 | Webhook + Schedule 02h00 + Sub | Orchestration complète Bronze → BC → Gold |
+| `wf08a-sync-customers-v1` | WF-08A | executeWorkflowTrigger | clients → etlCustomers (BC OData) |
+| `wf08b-sync-articles-v1` | WF-08B | executeWorkflowTrigger | articles → etlArticles (BC OData) |
+| `wf08c-sync-headers-v1` | WF-08C | executeWorkflowTrigger | salesshipmentheader → etlShipmentHeaders (BC OData) |
+| `wf08d-sync-distances-v1` | WF-08D | executeWorkflowTrigger | distances → etlDistances (BC OData) |
+| `wf08e-sync-shiplines-v1` | WF-08E | executeWorkflowTrigger | salesshipmentline → etlShipmentLines (BC OData) |
+| `wf08f-sync-ecomlines-v1` | WF-08F | executeWorkflowTrigger | data_merged → etlEcommerceLines (BC OData) |
+| `wf09bc-bc-to-gold-v1` | WF-09BC | executeWorkflowTrigger | BC OData → bc_gold PostgreSQL (lecture inverse) |
+| `wf10bc-health-monitor-v1` | WF-10BC | Schedule | Health check BC + alertes Gmail |
 
 ### 5.2 Variables d'environnement n8n
 
 | Variable | Valeur | Usage |
 |----------|--------|-------|
 | `BC_COMPANY_ID` | GUID de la société BC | Toutes les requêtes OData |
+| `GPS_WEBHOOK_SECRET` | Hash SHA-256 (64 car.) | Validation X-API-KEY — WF-04B |
 
 ### 5.3 Pattern de nœud Code (sous-workflows 08A–08F)
 
@@ -401,54 +439,9 @@ Chaque sous-workflow contient exactement 2 nœuds :
 
 ---
 
-## 6. Architecture Apache Hop
+## 6. Schéma de la base de données Gold
 
-### 6.1 Pipelines créés dans ETL_Projet_BC
-
-| Fichier | Couche | Source | Destination | Mode |
-|---------|--------|--------|-------------|------|
-| `05_silver_distances.hpl` | Bronze→Silver | `/staging/enrichment/distances_realtime.json` | `silver.distance_matrix` | TRUNCATE + INSERT |
-| `05_dim_distances.hpl` | Silver→Gold | `silver.distance_matrix` | `dim_distances` | TRUNCATE + INSERT |
-
-### 6.2 Détail pipeline 05_dim_distances.hpl
-
-```
-[TableInput]                    [ScriptValueMod]              [TableOutput]
-Read from                  ──▶  Parse types               ──▶  Load
-silver.distance_matrix          ─────────────────               dim_distances
-                                parseISO(first_event_at)
-SELECT session_id,              parseISO(last_event_at)         TRUNCATE Y
-       session_date,            parseFloat(dist_km)             specify_fields Y
-       total_distance_km,       parseFloat(dist_m)
-       total_distance_meters,   parseFloat(max_spd)             Mapping :
-       max_speed_kmh,           parseFloat(avg_spd)             session_id
-       avg_speed_kmh,           parseInt(act_secs)              session_date
-       total_active_seconds,    parseInt(evt_cnt)               total_distance_km
-       event_count,                                             total_distance_meters
-       first_event_at,          Types sortants :                max_speed_kmh
-       last_event_at            BigNumber(10,4)                 avg_speed_kmh
-FROM silver.distance_matrix     BigNumber(10,2)                 total_active_seconds
-                                BigNumber(10,3) × 2             event_count
-                                Integer × 2                     first_event_at
-                                Date × 2                        last_event_at
-```
-
-### 6.3 Connexion PostgreSQL (postgres_gold)
-
-| Paramètre | Valeur |
-|-----------|--------|
-| Host | 172.18.0.4 |
-| Port | 5432 |
-| Database | data_warehouse_gold |
-| User | nyanu |
-| Schema Silver | silver |
-| Schema Gold | public |
-
----
-
-## 7. Schéma de la base de données Gold
-
-### 7.1 Diagramme entité-relation (Gold)
+### 6.1 Diagramme entité-relation (Gold)
 
 ```
 ┌──────────────────┐        ┌────────────────────────┐
@@ -505,39 +498,25 @@ FROM silver.distance_matrix     BigNumber(10,2)                 total_active_sec
 └───────────────────────────┘
 ```
 
-### 7.2 Schéma Silver
-
-```
-silver.distance_matrix
-─────────────────────────────────────────────────────
-session_id             VARCHAR(50)   ← ID session GPS
-session_date           VARCHAR(10)   ← YYYY-MM-DD
-total_distance_km      VARCHAR(30)   ← valeur décimale
-total_distance_meters  VARCHAR(30)   ← valeur décimale
-max_speed_kmh          VARCHAR(30)   ← valeur décimale
-avg_speed_kmh          VARCHAR(30)   ← calculé
-total_active_seconds   VARCHAR(20)   ← entier
-event_count            VARCHAR(20)   ← entier
-first_event_at         VARCHAR(50)   ← ISO 8601
-last_event_at          VARCHAR(50)   ← ISO 8601
-```
-
 ---
 
-## 8. Dictionnaire technique des composants
+## 7. Dictionnaire technique des composants
 
 | Composant | Fichier | Rôle | Entrée | Sortie |
 |-----------|---------|------|--------|--------|
-| WF-04B | `n8n/workflows/04b_distance_webhook.json` | Réception GPS | Événement JSON | MinIO + staging |
-| WF-08 | `n8n/workflows/08_gold_to_bc.json` | Orchestration | Trigger | Résumé sync |
-| WF-08A | `n8n/workflows/08a_sync_customers.json` | Sync customers | PostgreSQL | BC etlCustomers |
+| WF-01BC | `n8n/workflows/01bc_csv_json_to_minio.json` | Fusion CSV+JSON → Bronze | `/data_sources/data.csv` | MinIO `raw/flat_files/data_merged.json` |
+| WF-03BC | `n8n/workflows/03bc_postgres_to_minio.json` | PG Windows → Bronze | PostgreSQL Windows | MinIO `raw/database/*/latest/` |
+| WF-04B | `n8n/workflows/04b_distance_webhook.json` | Réception GPS temps réel | Webhook POST (ngrok) | MinIO `raw/distances/` + staging + WF-08D |
+| WF-06 | `n8n/workflows/06_vehicles_to_minio.json` | Véhicules → Bronze | JSON fichier local | MinIO `raw/vehicles/` + bc_gold |
+| WF-08 | `n8n/workflows/08_gold_to_bc.json` | Orchestration complète | Webhook / Schedule | Résumé sync (inserts+updates) |
+| WF-08A | `n8n/workflows/08a_sync_customers.json` | Sync clients | PostgreSQL | BC etlCustomers |
 | WF-08B | `n8n/workflows/08b_sync_articles.json` | Sync articles | PostgreSQL | BC etlArticles |
-| WF-08C | `n8n/workflows/08c_sync_headers.json` | Sync headers | PostgreSQL | BC etlShipmentHeaders |
-| WF-08D | `n8n/workflows/08d_sync_distances.json` | Sync distances | PostgreSQL | BC etlDistances |
-| WF-08E | `n8n/workflows/08e_sync_shipment_lines.json` | Sync ship. lines | PostgreSQL | BC etlShipmentLines |
-| WF-08F | `n8n/workflows/08f_sync_ecommerce_lines.json` | Sync ecom. lines | PostgreSQL | BC etlEcommerceLines |
-| Pipeline Silver | `apache_hop_data/pipelines/silver/05_silver_distances.hpl` | JSON→Silver | Staging JSON | silver.distance_matrix |
-| Pipeline Gold | `apache_hop_data/pipelines/gold/05_dim_distances.hpl` | Silver→Gold | silver.distance_matrix | dim_distances |
+| WF-08C | `n8n/workflows/08c_sync_headers.json` | Sync en-têtes expédition | PostgreSQL | BC etlShipmentHeaders |
+| WF-08D | `n8n/workflows/08d_sync_distances.json` | Sync distances | PostgreSQL bc_gold | BC etlDistances |
+| WF-08E | `n8n/workflows/08e_sync_shipment_lines.json` | Sync lignes expédition | PostgreSQL | BC etlShipmentLines |
+| WF-08F | `n8n/workflows/08f_sync_ecommerce_lines.json` | Sync lignes e-commerce | MinIO data_merged.json | BC etlEcommerceLines |
+| WF-09BC | `n8n/workflows/09bc_bc_to_gold.json` | Lecture inverse BC→Gold | BC OData | bc_gold PostgreSQL |
+| WF-10BC | `n8n/workflows/10bc_health_monitor.json` | Supervision + alertes | Schedule | Gmail alertes |
 | Migration SQL | `schema_gold_updates.sql` | Mise à jour schéma | — | Schéma Gold mis à jour |
 | Codeunit AL | `al_etl_extension/src/Codeunit50210.ETLBCImportManager.al` | Logique BC | Appel AL | Tables BC + HTTP |
 | Tables AL | `al_etl_extension/src/Table502XX.*.al` | Stockage BC | API OData | Enregistrements BC |

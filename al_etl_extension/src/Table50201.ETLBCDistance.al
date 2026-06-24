@@ -60,6 +60,11 @@ table 50201 "ETL BC Distance"
             Caption = 'ETL Loaded At';
             DataClassification = SystemMetadata;
         }
+        field(12; "Real Session Date"; Text[10])
+        {
+            Caption = 'Real Session Date';
+            DataClassification = CustomerContent;
+        }
     }
 
     keys

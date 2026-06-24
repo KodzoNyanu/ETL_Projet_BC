@@ -17,17 +17,33 @@ HEADERS   = {
 
 WF_DIR = '/home/nyanu/Documents/ETL_Projet_BC/n8n/workflows'
 
-# Fichiers à importer (ordre logique)
+# Sous-workflows en premier : leurs IDs n8n doivent être connus avant les parents.
+# 04b_distance_webhook référence wf08d-sync-distances-v1 via executeWorkflow → il passe en dernier.
 FILES = [
-    '04b_distance_webhook.json',
-    '08_gold_to_bc.json',
     '08a_sync_customers.json',
     '08b_sync_articles.json',
     '08c_sync_headers.json',
     '08d_sync_distances.json',
     '08e_sync_shipment_lines.json',
     '08f_sync_ecommerce_lines.json',
+    '08_gold_to_bc.json',
+    '04b_distance_webhook.json',
 ]
+
+# Mapping custom_id_json → nom du workflow pour résoudre les références croisées.
+def build_custom_id_map(files):
+    mapping = {}
+    for fname in files:
+        fp = os.path.join(WF_DIR, fname)
+        with open(fp, encoding='utf-8') as fh:
+            wf = json.load(fh)
+        custom_id = wf.get('id', '')
+        if custom_id:
+            mapping[custom_id] = wf['name']
+    return mapping
+
+CUSTOM_ID_TO_NAME = build_custom_id_map(FILES)
+
 
 def api_get(path):
     req = urllib.request.Request(f'{BASE_URL}{path}', headers=HEADERS)
@@ -61,8 +77,30 @@ def api_patch(path, body):
     except urllib.error.HTTPError as e:
         return e.code, json.loads(e.read())
 
+
+def patch_execute_workflow_nodes(nodes, n8n_id_by_name):
+    """
+    Remplace les custom IDs JSON (ex: 'wf08d-sync-distances-v1') par les vrais
+    IDs n8n assignés à l'import dans tous les nœuds executeWorkflow.
+    Retourne True si au moins un nœud a été patché.
+    """
+    patched = False
+    for node in nodes:
+        if node.get('type') == 'n8n-nodes-base.executeWorkflow':
+            params = node.get('parameters', {})
+            custom_id = params.get('workflowId', '')
+            wf_name = CUSTOM_ID_TO_NAME.get(custom_id)
+            if wf_name and wf_name in n8n_id_by_name:
+                real_id = str(n8n_id_by_name[wf_name])
+                if params.get('workflowId') != real_id:
+                    params['workflowId'] = real_id
+                    patched = True
+                    print(f'   ↳ executeWorkflow patché : {custom_id!r} → n8n ID {real_id!r}')
+    return patched
+
+
 # Récupérer les workflows existants (pour éviter les doublons)
-existing = {}
+existing = {}  # name → n8n_id
 try:
     result = api_get('/workflows?limit=50')
     for wf in result.get('data', []):
@@ -83,27 +121,25 @@ for filename in FILES:
         wf = json.load(f)
 
     name = wf['name']
-    wf_id = wf.get('id')
 
-    # Préparer le payload pour l'API n8n
-    # L'API n8n attend : name, nodes, connections, settings, staticData
+    # Copie des nœuds pour patcher les références sans modifier le fichier source
+    nodes = json.loads(json.dumps(wf['nodes']))
+    patch_execute_workflow_nodes(nodes, existing)
+
     payload = {
         'name':        wf['name'],
-        'nodes':       wf['nodes'],
+        'nodes':       nodes,
         'connections': wf['connections'],
         'settings':    wf.get('settings', {'executionOrder': 'v1'}),
         'staticData':  wf.get('staticData', None),
     }
-    # Les tags sont read-only via l'API n8n — ne pas les inclure dans le payload
 
     if name in existing:
-        # Le workflow existe déjà → on le met à jour (PUT)
         existing_id = existing[name]
         print(f'↻  MISE À JOUR  [{existing_id}] {name}')
         status, resp = api_put(f'/workflows/{existing_id}', payload)
         if status in (200, 201):
             print(f'   ✔  Mis à jour (HTTP {status})')
-            # Réactiver si nécessaire
             if wf.get('active', True):
                 api_patch(f'/workflows/{existing_id}/activate', {})
             results.append({'file': filename, 'action': 'updated', 'id': existing_id, 'status': status})
@@ -111,13 +147,14 @@ for filename in FILES:
             print(f'   ✘  Erreur HTTP {status} : {str(resp)[:200]}')
             results.append({'file': filename, 'action': 'error', 'id': existing_id, 'status': status, 'detail': str(resp)[:200]})
     else:
-        # Nouveau workflow → POST
         print(f'✚  CRÉATION    {name}')
         status, resp = api_post('/workflows', payload)
         if status in (200, 201):
             new_id = resp.get('id', '?')
             print(f'   ✔  Créé avec ID [{new_id}] (HTTP {status})')
-            # Activer le workflow
+            # Mise à jour du mapping pour que les workflows importés ensuite
+            # (notamment 04b) puissent résoudre cette référence
+            existing[name] = new_id
             if wf.get('active', True):
                 act_status, _ = api_patch(f'/workflows/{new_id}/activate', {})
                 print(f'   ▶  Activation : HTTP {act_status}')

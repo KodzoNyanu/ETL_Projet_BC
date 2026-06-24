@@ -28,6 +28,7 @@ page 50207 "ETL BC Distances Api"
             field(firstEventAt;        Rec."First Event At")        { Caption = 'firstEventAt'; }
             field(lastEventAt;         Rec."Last Event At")         { Caption = 'lastEventAt'; }
             field(etlLoadedAt;         Rec."ETL Loaded At")         { Caption = 'etlLoadedAt'; }
+            field(realSessionDate;     Rec."Real Session Date")     { Caption = 'realSessionDate'; }
         }
     }
 }

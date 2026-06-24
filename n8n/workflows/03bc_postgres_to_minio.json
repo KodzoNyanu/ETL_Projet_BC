@@ -1,0 +1,415 @@
+{
+  "id": "wf03bc-postgres-minio-v1",
+  "name": "03BC - Bronze | PostgreSQL Windows → MinIO (ETL_Projet_BC)",
+  "active": true,
+  "nodes": [
+    {
+      "id": "ewt-wf03bc-001",
+      "name": "Déclencheur sous-workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        300
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "pg-bc-clients-001",
+      "name": "Requête PG — clients",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const { Client } = require('pg');\nconst fs     = require('fs');\nconst http   = require('http');\nconst crypto = require('crypto');\n\nconst TABLE        = 'clients';\nconst STAGING_FILE = '/staging/bc/database/clients.json';\nconst MINIO_KEY    = 'etl-projet-bc/raw/database/clients/latest/clients.json';\nconst MINIO_HOST   = '172.18.0.3';\nconst MINIO_PORT   = 9000;\nconst MINIO_BUCKET = 'bronze';\nconst MINIO_USER   = 'nyanu';\nconst MINIO_PASS   = 'nyanu1234';\n\n// Lecture MinIO via AWS Signature V4 (http natif)\nasync function fetchMinIO(key) {\n  const now = new Date();\n  const ts  = now.toISOString().replace(/[:-]|\\..{3}/g,'').slice(0,15)+'Z';\n  const ds  = ts.slice(0,8);\n  const hdr = `host:${MINIO_HOST}:${MINIO_PORT}\\nx-amz-date:${ts}\\n`;\n  const ph  = crypto.createHash('sha256').update('').digest('hex');\n  const cr  = `GET\\n/${MINIO_BUCKET}/${key}\\n\\n${hdr}\\nhost;x-amz-date\\n${ph}`;\n  const cs  = `${ds}/us-east-1/s3/aws4_request`;\n  const sts = `AWS4-HMAC-SHA256\\n${ts}\\n${cs}\\n${crypto.createHash('sha256').update(cr).digest('hex')}`;\n  const hmac = (k,d) => crypto.createHmac('sha256',k).update(d).digest();\n  const sk  = hmac(hmac(hmac(hmac(`AWS4${MINIO_PASS}`,ds),'us-east-1'),'s3'),'aws4_request');\n  const sig = crypto.createHmac('sha256',sk).update(sts).digest('hex');\n  const auth = `AWS4-HMAC-SHA256 Credential=${MINIO_USER}/${cs}, SignedHeaders=host;x-amz-date, Signature=${sig}`;\n  return new Promise((res,rej) => {\n    const req = http.request({\n      hostname:MINIO_HOST, port:MINIO_PORT,\n      path:`/${MINIO_BUCKET}/${key}`, method:'GET',\n      headers:{'x-amz-date':ts,'Authorization':auth}\n    }, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>r.statusCode===200?res(d):rej(new Error(`MinIO ${r.statusCode}`))); });\n    req.on('error',rej); req.end();\n  });\n}\n\n// Niveau 1 — staging local (plus rapide, toujours prioritaire)\nif (fs.existsSync(STAGING_FILE)) {\n  const buf  = fs.readFileSync(STAGING_FILE);\n  const data = JSON.parse(buf.toString('utf8'));\n  const rows = data.data || [];\n  console.log(`[WF-BC-03] ✅ ${TABLE} : staging local — ${rows.length} lignes`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'staging' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n}\n\n// Niveau 2 — PostgreSQL externe (réseau école)\nconst pg = new Client({ host:'10.14.219.2', port:5433, database:'database_extern_local',\n  user:'postgres', password:'postgres', connectionTimeoutMillis:5000, statement_timeout:30000 });\ntry {\n  await pg.connect();\n  const res = await pg.query(`SELECT row_to_json(t) AS r FROM \"${TABLE}\" t`);\n  await pg.end();\n  const rows = res.rows.map(r => r.r);\n  const buf  = Buffer.from(JSON.stringify({ data: rows }), 'utf8');\n  console.log(`[WF-BC-03] ✅ ${TABLE} : PostgreSQL externe — ${rows.length} lignes`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'pg' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n} catch(e) {\n  try { await pg.end(); } catch(_) {}\n  console.log(`[WF-BC-03] ⚠️  PostgreSQL inaccessible (${e.message}) — fallback MinIO`);\n}\n\n// Niveau 3 — MinIO Docker interne (toujours disponible dans le stack)\ntry {\n  const raw  = await fetchMinIO(MINIO_KEY);\n  const data = JSON.parse(raw);\n  const rows = data.data || [];\n  const buf  = Buffer.from(raw, 'utf8');\n  fs.mkdirSync('/staging/bc/database', { recursive:true });\n  fs.writeFileSync(STAGING_FILE, buf);\n  console.log(`[WF-BC-03] ✅ ${TABLE} : MinIO fallback — ${rows.length} lignes (staging restauré)`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'minio' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n} catch(e2) {\n  throw new Error(`[WF-BC-03] Toutes sources indisponibles pour ${TABLE} : staging absent, PG inaccessible, MinIO: ${e2.message}`);\n}"
+      }
+    },
+    {
+      "id": "s3-bc-clients-001",
+      "name": "MinIO Bronze — clients",
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        640,
+        300
+      ],
+      "credentials": {
+        "s3": {
+          "id": "Iqpe5A6QfeoXeIZR",
+          "name": "MinIO S3 (path-style)"
+        }
+      },
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "bronze",
+        "fileName": "={{ $json.key }}",
+        "binaryPropertyName": "tableData",
+        "additionalFields": {
+          "acl": "private"
+        },
+        "binaryData": true
+      }
+    },
+    {
+      "id": "stage-bc-clients-001",
+      "name": "Stage — clients",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        920,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const fs = require('fs');\nconst pgItem = $('Requête PG — clients').first();\nconst buf = Buffer.from(pgItem.binary.tableData.data, 'base64');\nfs.mkdirSync('/staging/bc/database', { recursive: true });\nfs.writeFileSync('/staging/bc/database/clients.json', buf);\nconst rows = $input.first().json.rowCount ?? pgItem.json.rowCount;\nconsole.log('[WF-BC-03] ✅ clients stagé : ' + rows + ' lignes');\nreturn [{ json: { status: 'success', table: 'clients', rows } }];"
+      }
+    },
+    {
+      "id": "pg-bc-articles-001",
+      "name": "Requête PG — articles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1200,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const { Client } = require('pg');\nconst fs     = require('fs');\nconst http   = require('http');\nconst crypto = require('crypto');\n\nconst TABLE        = 'articles';\nconst STAGING_FILE = '/staging/bc/database/articles.json';\nconst MINIO_KEY    = 'etl-projet-bc/raw/database/articles/latest/articles.json';\nconst MINIO_HOST   = '172.18.0.3';\nconst MINIO_PORT   = 9000;\nconst MINIO_BUCKET = 'bronze';\nconst MINIO_USER   = 'nyanu';\nconst MINIO_PASS   = 'nyanu1234';\n\n// Lecture MinIO via AWS Signature V4 (http natif)\nasync function fetchMinIO(key) {\n  const now = new Date();\n  const ts  = now.toISOString().replace(/[:-]|\\..{3}/g,'').slice(0,15)+'Z';\n  const ds  = ts.slice(0,8);\n  const hdr = `host:${MINIO_HOST}:${MINIO_PORT}\\nx-amz-date:${ts}\\n`;\n  const ph  = crypto.createHash('sha256').update('').digest('hex');\n  const cr  = `GET\\n/${MINIO_BUCKET}/${key}\\n\\n${hdr}\\nhost;x-amz-date\\n${ph}`;\n  const cs  = `${ds}/us-east-1/s3/aws4_request`;\n  const sts = `AWS4-HMAC-SHA256\\n${ts}\\n${cs}\\n${crypto.createHash('sha256').update(cr).digest('hex')}`;\n  const hmac = (k,d) => crypto.createHmac('sha256',k).update(d).digest();\n  const sk  = hmac(hmac(hmac(hmac(`AWS4${MINIO_PASS}`,ds),'us-east-1'),'s3'),'aws4_request');\n  const sig = crypto.createHmac('sha256',sk).update(sts).digest('hex');\n  const auth = `AWS4-HMAC-SHA256 Credential=${MINIO_USER}/${cs}, SignedHeaders=host;x-amz-date, Signature=${sig}`;\n  return new Promise((res,rej) => {\n    const req = http.request({\n      hostname:MINIO_HOST, port:MINIO_PORT,\n      path:`/${MINIO_BUCKET}/${key}`, method:'GET',\n      headers:{'x-amz-date':ts,'Authorization':auth}\n    }, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>r.statusCode===200?res(d):rej(new Error(`MinIO ${r.statusCode}`))); });\n    req.on('error',rej); req.end();\n  });\n}\n\n// Niveau 1 — staging local (plus rapide, toujours prioritaire)\nif (fs.existsSync(STAGING_FILE)) {\n  const buf  = fs.readFileSync(STAGING_FILE);\n  const data = JSON.parse(buf.toString('utf8'));\n  const rows = data.data || [];\n  console.log(`[WF-BC-03] ✅ ${TABLE} : staging local — ${rows.length} lignes`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'staging' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n}\n\n// Niveau 2 — PostgreSQL externe (réseau école)\nconst pg = new Client({ host:'10.14.219.2', port:5433, database:'database_extern_local',\n  user:'postgres', password:'postgres', connectionTimeoutMillis:5000, statement_timeout:30000 });\ntry {\n  await pg.connect();\n  const res = await pg.query(`SELECT row_to_json(t) AS r FROM \"${TABLE}\" t`);\n  await pg.end();\n  const rows = res.rows.map(r => r.r);\n  const buf  = Buffer.from(JSON.stringify({ data: rows }), 'utf8');\n  console.log(`[WF-BC-03] ✅ ${TABLE} : PostgreSQL externe — ${rows.length} lignes`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'pg' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n} catch(e) {\n  try { await pg.end(); } catch(_) {}\n  console.log(`[WF-BC-03] ⚠️  PostgreSQL inaccessible (${e.message}) — fallback MinIO`);\n}\n\n// Niveau 3 — MinIO Docker interne (toujours disponible dans le stack)\ntry {\n  const raw  = await fetchMinIO(MINIO_KEY);\n  const data = JSON.parse(raw);\n  const rows = data.data || [];\n  const buf  = Buffer.from(raw, 'utf8');\n  fs.mkdirSync('/staging/bc/database', { recursive:true });\n  fs.writeFileSync(STAGING_FILE, buf);\n  console.log(`[WF-BC-03] ✅ ${TABLE} : MinIO fallback — ${rows.length} lignes (staging restauré)`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'minio' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n} catch(e2) {\n  throw new Error(`[WF-BC-03] Toutes sources indisponibles pour ${TABLE} : staging absent, PG inaccessible, MinIO: ${e2.message}`);\n}"
+      }
+    },
+    {
+      "id": "s3-bc-articles-001",
+      "name": "MinIO Bronze — articles",
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        1480,
+        300
+      ],
+      "credentials": {
+        "s3": {
+          "id": "Iqpe5A6QfeoXeIZR",
+          "name": "MinIO S3 (path-style)"
+        }
+      },
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "bronze",
+        "fileName": "={{ $json.key }}",
+        "binaryPropertyName": "tableData",
+        "additionalFields": {
+          "acl": "private"
+        },
+        "binaryData": true
+      }
+    },
+    {
+      "id": "stage-bc-articles-001",
+      "name": "Stage — articles",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const fs = require('fs');\nconst pgItem = $('Requête PG — articles').first();\nconst buf = Buffer.from(pgItem.binary.tableData.data, 'base64');\nfs.mkdirSync('/staging/bc/database', { recursive: true });\nfs.writeFileSync('/staging/bc/database/articles.json', buf);\nconst rows = $input.first().json.rowCount ?? pgItem.json.rowCount;\nconsole.log('[WF-BC-03] ✅ articles stagé : ' + rows + ' lignes');\nreturn [{ json: { status: 'success', table: 'articles', rows } }];"
+      }
+    },
+    {
+      "id": "pg-bc-salesshipmentheader-001",
+      "name": "Requête PG — salesshipmentheader",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2040,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const { Client } = require('pg');\nconst fs     = require('fs');\nconst http   = require('http');\nconst crypto = require('crypto');\n\nconst TABLE        = 'salesshipmentheader';\nconst STAGING_FILE = '/staging/bc/database/salesshipmentheader.json';\nconst MINIO_KEY    = 'etl-projet-bc/raw/database/salesshipmentheader/latest/salesshipmentheader.json';\nconst MINIO_HOST   = '172.18.0.3';\nconst MINIO_PORT   = 9000;\nconst MINIO_BUCKET = 'bronze';\nconst MINIO_USER   = 'nyanu';\nconst MINIO_PASS   = 'nyanu1234';\n\n// Lecture MinIO via AWS Signature V4 (http natif)\nasync function fetchMinIO(key) {\n  const now = new Date();\n  const ts  = now.toISOString().replace(/[:-]|\\..{3}/g,'').slice(0,15)+'Z';\n  const ds  = ts.slice(0,8);\n  const hdr = `host:${MINIO_HOST}:${MINIO_PORT}\\nx-amz-date:${ts}\\n`;\n  const ph  = crypto.createHash('sha256').update('').digest('hex');\n  const cr  = `GET\\n/${MINIO_BUCKET}/${key}\\n\\n${hdr}\\nhost;x-amz-date\\n${ph}`;\n  const cs  = `${ds}/us-east-1/s3/aws4_request`;\n  const sts = `AWS4-HMAC-SHA256\\n${ts}\\n${cs}\\n${crypto.createHash('sha256').update(cr).digest('hex')}`;\n  const hmac = (k,d) => crypto.createHmac('sha256',k).update(d).digest();\n  const sk  = hmac(hmac(hmac(hmac(`AWS4${MINIO_PASS}`,ds),'us-east-1'),'s3'),'aws4_request');\n  const sig = crypto.createHmac('sha256',sk).update(sts).digest('hex');\n  const auth = `AWS4-HMAC-SHA256 Credential=${MINIO_USER}/${cs}, SignedHeaders=host;x-amz-date, Signature=${sig}`;\n  return new Promise((res,rej) => {\n    const req = http.request({\n      hostname:MINIO_HOST, port:MINIO_PORT,\n      path:`/${MINIO_BUCKET}/${key}`, method:'GET',\n      headers:{'x-amz-date':ts,'Authorization':auth}\n    }, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>r.statusCode===200?res(d):rej(new Error(`MinIO ${r.statusCode}`))); });\n    req.on('error',rej); req.end();\n  });\n}\n\n// Niveau 1 — staging local (plus rapide, toujours prioritaire)\nif (fs.existsSync(STAGING_FILE)) {\n  const buf  = fs.readFileSync(STAGING_FILE);\n  const data = JSON.parse(buf.toString('utf8'));\n  const rows = data.data || [];\n  console.log(`[WF-BC-03] ✅ ${TABLE} : staging local — ${rows.length} lignes`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'staging' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n}\n\n// Niveau 2 — PostgreSQL externe (réseau école)\nconst pg = new Client({ host:'10.14.219.2', port:5433, database:'database_extern_local',\n  user:'postgres', password:'postgres', connectionTimeoutMillis:5000, statement_timeout:30000 });\ntry {\n  await pg.connect();\n  const res = await pg.query(`SELECT row_to_json(t) AS r FROM \"${TABLE}\" t`);\n  await pg.end();\n  const rows = res.rows.map(r => r.r);\n  const buf  = Buffer.from(JSON.stringify({ data: rows }), 'utf8');\n  console.log(`[WF-BC-03] ✅ ${TABLE} : PostgreSQL externe — ${rows.length} lignes`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'pg' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n} catch(e) {\n  try { await pg.end(); } catch(_) {}\n  console.log(`[WF-BC-03] ⚠️  PostgreSQL inaccessible (${e.message}) — fallback MinIO`);\n}\n\n// Niveau 3 — MinIO Docker interne (toujours disponible dans le stack)\ntry {\n  const raw  = await fetchMinIO(MINIO_KEY);\n  const data = JSON.parse(raw);\n  const rows = data.data || [];\n  const buf  = Buffer.from(raw, 'utf8');\n  fs.mkdirSync('/staging/bc/database', { recursive:true });\n  fs.writeFileSync(STAGING_FILE, buf);\n  console.log(`[WF-BC-03] ✅ ${TABLE} : MinIO fallback — ${rows.length} lignes (staging restauré)`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'minio' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n} catch(e2) {\n  throw new Error(`[WF-BC-03] Toutes sources indisponibles pour ${TABLE} : staging absent, PG inaccessible, MinIO: ${e2.message}`);\n}"
+      }
+    },
+    {
+      "id": "s3-bc-salesshipmentheader-001",
+      "name": "MinIO Bronze — salesshipmentheader",
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        2320,
+        300
+      ],
+      "credentials": {
+        "s3": {
+          "id": "Iqpe5A6QfeoXeIZR",
+          "name": "MinIO S3 (path-style)"
+        }
+      },
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "bronze",
+        "fileName": "={{ $json.key }}",
+        "binaryPropertyName": "tableData",
+        "additionalFields": {
+          "acl": "private"
+        },
+        "binaryData": true
+      }
+    },
+    {
+      "id": "stage-bc-salesshipmentheader-001",
+      "name": "Stage — salesshipmentheader",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const fs = require('fs');\nconst pgItem = $('Requête PG — salesshipmentheader').first();\nconst buf = Buffer.from(pgItem.binary.tableData.data, 'base64');\nfs.mkdirSync('/staging/bc/database', { recursive: true });\nfs.writeFileSync('/staging/bc/database/salesshipmentheader.json', buf);\nconst rows = $input.first().json.rowCount ?? pgItem.json.rowCount;\nconsole.log('[WF-BC-03] ✅ salesshipmentheader stagé : ' + rows + ' lignes');\nreturn [{ json: { status: 'success', table: 'salesshipmentheader', rows } }];"
+      }
+    },
+    {
+      "id": "pg-bc-salesshipmentline-001",
+      "name": "Requête PG — salesshipmentline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const { Client } = require('pg');\nconst fs     = require('fs');\nconst http   = require('http');\nconst crypto = require('crypto');\n\nconst TABLE        = 'salesshipmentline';\nconst STAGING_FILE = '/staging/bc/database/salesshipmentline.json';\nconst MINIO_KEY    = 'etl-projet-bc/raw/database/salesshipmentline/latest/salesshipmentline.json';\nconst MINIO_HOST   = '172.18.0.3';\nconst MINIO_PORT   = 9000;\nconst MINIO_BUCKET = 'bronze';\nconst MINIO_USER   = 'nyanu';\nconst MINIO_PASS   = 'nyanu1234';\n\n// Lecture MinIO via AWS Signature V4 (http natif)\nasync function fetchMinIO(key) {\n  const now = new Date();\n  const ts  = now.toISOString().replace(/[:-]|\\..{3}/g,'').slice(0,15)+'Z';\n  const ds  = ts.slice(0,8);\n  const hdr = `host:${MINIO_HOST}:${MINIO_PORT}\\nx-amz-date:${ts}\\n`;\n  const ph  = crypto.createHash('sha256').update('').digest('hex');\n  const cr  = `GET\\n/${MINIO_BUCKET}/${key}\\n\\n${hdr}\\nhost;x-amz-date\\n${ph}`;\n  const cs  = `${ds}/us-east-1/s3/aws4_request`;\n  const sts = `AWS4-HMAC-SHA256\\n${ts}\\n${cs}\\n${crypto.createHash('sha256').update(cr).digest('hex')}`;\n  const hmac = (k,d) => crypto.createHmac('sha256',k).update(d).digest();\n  const sk  = hmac(hmac(hmac(hmac(`AWS4${MINIO_PASS}`,ds),'us-east-1'),'s3'),'aws4_request');\n  const sig = crypto.createHmac('sha256',sk).update(sts).digest('hex');\n  const auth = `AWS4-HMAC-SHA256 Credential=${MINIO_USER}/${cs}, SignedHeaders=host;x-amz-date, Signature=${sig}`;\n  return new Promise((res,rej) => {\n    const req = http.request({\n      hostname:MINIO_HOST, port:MINIO_PORT,\n      path:`/${MINIO_BUCKET}/${key}`, method:'GET',\n      headers:{'x-amz-date':ts,'Authorization':auth}\n    }, r => { let d=''; r.on('data',c=>d+=c); r.on('end',()=>r.statusCode===200?res(d):rej(new Error(`MinIO ${r.statusCode}`))); });\n    req.on('error',rej); req.end();\n  });\n}\n\n// Niveau 1 — staging local (plus rapide, toujours prioritaire)\nif (fs.existsSync(STAGING_FILE)) {\n  const buf  = fs.readFileSync(STAGING_FILE);\n  const data = JSON.parse(buf.toString('utf8'));\n  const rows = data.data || [];\n  console.log(`[WF-BC-03] ✅ ${TABLE} : staging local — ${rows.length} lignes`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'staging' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n}\n\n// Niveau 2 — PostgreSQL externe (réseau école)\nconst pg = new Client({ host:'10.14.219.2', port:5433, database:'database_extern_local',\n  user:'postgres', password:'postgres', connectionTimeoutMillis:5000, statement_timeout:30000 });\ntry {\n  await pg.connect();\n  const res = await pg.query(`SELECT row_to_json(t) AS r FROM \"${TABLE}\" t`);\n  await pg.end();\n  const rows = res.rows.map(r => r.r);\n  const buf  = Buffer.from(JSON.stringify({ data: rows }), 'utf8');\n  console.log(`[WF-BC-03] ✅ ${TABLE} : PostgreSQL externe — ${rows.length} lignes`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'pg' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n} catch(e) {\n  try { await pg.end(); } catch(_) {}\n  console.log(`[WF-BC-03] ⚠️  PostgreSQL inaccessible (${e.message}) — fallback MinIO`);\n}\n\n// Niveau 3 — MinIO Docker interne (toujours disponible dans le stack)\ntry {\n  const raw  = await fetchMinIO(MINIO_KEY);\n  const data = JSON.parse(raw);\n  const rows = data.data || [];\n  const buf  = Buffer.from(raw, 'utf8');\n  fs.mkdirSync('/staging/bc/database', { recursive:true });\n  fs.writeFileSync(STAGING_FILE, buf);\n  console.log(`[WF-BC-03] ✅ ${TABLE} : MinIO fallback — ${rows.length} lignes (staging restauré)`);\n  return [{ json:{ table:TABLE, rowCount:rows.length, key:MINIO_KEY, source:'minio' },\n             binary:{ tableData:{ data:buf.toString('base64'), mimeType:'application/json', fileName:`${TABLE}.json` } } }];\n} catch(e2) {\n  throw new Error(`[WF-BC-03] Toutes sources indisponibles pour ${TABLE} : staging absent, PG inaccessible, MinIO: ${e2.message}`);\n}"
+      }
+    },
+    {
+      "id": "s3-bc-salesshipmentline-001",
+      "name": "MinIO Bronze — salesshipmentline",
+      "type": "n8n-nodes-base.s3",
+      "typeVersion": 1,
+      "position": [
+        3160,
+        300
+      ],
+      "credentials": {
+        "s3": {
+          "id": "Iqpe5A6QfeoXeIZR",
+          "name": "MinIO S3 (path-style)"
+        }
+      },
+      "parameters": {
+        "operation": "upload",
+        "bucketName": "bronze",
+        "fileName": "={{ $json.key }}",
+        "binaryPropertyName": "tableData",
+        "additionalFields": {
+          "acl": "private"
+        },
+        "binaryData": true
+      }
+    },
+    {
+      "id": "stage-bc-salesshipmentline-001",
+      "name": "Stage — salesshipmentline",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3440,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const fs = require('fs');\nconst pgItem = $('Requête PG — salesshipmentline').first();\nconst buf = Buffer.from(pgItem.binary.tableData.data, 'base64');\nfs.mkdirSync('/staging/bc/database', { recursive: true });\nfs.writeFileSync('/staging/bc/database/salesshipmentline.json', buf);\nconst rows = $input.first().json.rowCount ?? pgItem.json.rowCount;\nconsole.log('[WF-BC-03] ✅ salesshipmentline stagé : ' + rows + ' lignes');\nreturn [{ json: { status: 'success', table: 'salesshipmentline', rows } }];"
+      }
+    },
+    {
+      "id": "done-wf03bc-001",
+      "name": "Chargement terminé",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3720,
+        300
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "console.log('[WF-BC-03] ✅ Toutes les tables PostgreSQL chargées dans /staging/bc/database/');\nreturn [{ json: { status:'success', tables: ['clients','articles','salesshipmentheader','salesshipmentline'] } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Déclencheur sous-workflow": {
+      "main": [
+        [
+          {
+            "node": "Requête PG — clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requête PG — clients": {
+      "main": [
+        [
+          {
+            "node": "MinIO Bronze — clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MinIO Bronze — clients": {
+      "main": [
+        [
+          {
+            "node": "Stage — clients",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage — clients": {
+      "main": [
+        [
+          {
+            "node": "Requête PG — articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requête PG — articles": {
+      "main": [
+        [
+          {
+            "node": "MinIO Bronze — articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MinIO Bronze — articles": {
+      "main": [
+        [
+          {
+            "node": "Stage — articles",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage — articles": {
+      "main": [
+        [
+          {
+            "node": "Requête PG — salesshipmentheader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requête PG — salesshipmentheader": {
+      "main": [
+        [
+          {
+            "node": "MinIO Bronze — salesshipmentheader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MinIO Bronze — salesshipmentheader": {
+      "main": [
+        [
+          {
+            "node": "Stage — salesshipmentheader",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage — salesshipmentheader": {
+      "main": [
+        [
+          {
+            "node": "Requête PG — salesshipmentline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Requête PG — salesshipmentline": {
+      "main": [
+        [
+          {
+            "node": "MinIO Bronze — salesshipmentline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MinIO Bronze — salesshipmentline": {
+      "main": [
+        [
+          {
+            "node": "Stage — salesshipmentline",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stage — salesshipmentline": {
+      "main": [
+        [
+          {
+            "node": "Chargement terminé",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "a1b2c3d4-0003-00bc-b004-000000000001",
+  "activeVersionId": null,
+  "versionCounter": 5,
+  "triggerCount": 0,
+  "tags": [
+    {
+      "name": "bronze"
+    },
+    {
+      "name": "etl-projet-bc"
+    },
+    {
+      "name": "postgresql"
+    }
+  ]
+}

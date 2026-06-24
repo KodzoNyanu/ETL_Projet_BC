@@ -1,6 +1,6 @@
 {
   "id": "wf08a-sync-customers-v1",
-  "name": "08A - Sync dim_customers → BC",
+  "name": "08A - Sync clients → BC (JSON staging)",
   "active": true,
   "nodes": [
     {
@@ -8,28 +8,58 @@
       "name": "Déclencheur sous-workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [100, 300],
+      "position": [
+        100,
+        300
+      ],
       "parameters": {}
     },
     {
       "id": "code-08a-001",
-      "name": "Sync dim_customers → BC",
+      "name": "Sync clients → BC",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [360, 300],
+      "position": [
+        360,
+        300
+      ],
       "parameters": {
-        "jsCode": "const { Client } = require('pg');\nconst http = require('http');\n\nconst PG      = { host:'172.18.0.4', port:5432, database:'data_warehouse_gold', user:'nyanu', password:'nyanu', connectionTimeoutMillis:10000 };\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = $vars.BC_COMPANY_ID || '00000000-0000-0000-0000-000000000000';\nconst ENTITY  = 'etlCustomers';\nconst NOW     = new Date().toISOString();\n\nfunction bcReq(method, path, body) {\n  return new Promise((resolve, reject) => {\n    const pl = body ? JSON.stringify(body) : null;\n    const req = http.request({\n      hostname: PROXY, port: PORT,\n      path: `${BASE}/companies(${COMPANY})/${path}`,\n      method,\n      headers: {\n        'Content-Type': 'application/json', 'Accept': 'application/json',\n        ...(pl ? { 'Content-Length': Buffer.byteLength(pl) } : {}),\n        ...(method === 'PATCH' ? { 'If-Match': '*' } : {})\n      }\n    }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve({status:res.statusCode,body:d})); });\n    req.on('error', reject);\n    if (pl) req.write(pl);\n    req.end();\n  });\n}\n\nasync function upsert(keyVal, data) {\n  const r = await bcReq('POST', ENTITY, data);\n  if (r.status === 201 || r.status === 200) return { action:'inserted', key:keyVal, status:r.status };\n  if (r.status === 409 || r.status === 422) {\n    const r2 = await bcReq('PATCH', `${ENTITY}('${encodeURIComponent(keyVal)}')`, data);\n    return { action:'updated', key:keyVal, status:r2.status };\n  }\n  return { action:'error', key:keyVal, status:r.status, detail:r.body.substring(0,200) };\n}\n\nconst client = new Client(PG);\nawait client.connect();\nconst res = await client.query('SELECT customer_id,name,country,post_code,location_code,currency_code,salesperson_code FROM dim_customers');\nawait client.end();\n\nconst results = [];\nfor (const row of res.rows) {\n  const r = await upsert(row.customer_id, {\n    customerId: row.customer_id||'', name: row.name||'', country: row.country||'',\n    postCode: row.post_code||'', locationCode: row.location_code||'',\n    currencyCode: row.currency_code||'', salespersonCode: row.salesperson_code||'',\n    etlLoadedAt: NOW\n  });\n  results.push(r);\n}\nconst inserted = results.filter(r=>r.action==='inserted').length;\nconst updated  = results.filter(r=>r.action==='updated').length;\nconst errors   = results.filter(r=>r.action==='error').length;\nconsole.log(`[WF-08A] dim_customers → BC: ${inserted} inserts | ${updated} updates | ${errors} errors`);\nreturn [{ json: { table:'dim_customers', total:results.length, inserted, updated, errors } }];"
+        "jsCode": "const fs   = require('fs');\nconst http = require('http');\n\nconst STAGING_FILE = '/staging/bc/database/clients.json';\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = 'e6317465-9a3f-f011-be59-6045bde988e7';\nconst ENTITY  = 'etlCustomers';\nconst NOW     = new Date().toISOString();\n\nfunction bcReq(method, path, body) {\n  return new Promise((resolve, reject) => {\n    const pl = body ? JSON.stringify(body) : null;\n    const req = http.request({\n      hostname: PROXY, port: PORT,\n      path: `${BASE}/companies(${COMPANY})/${path}`,\n      method,\n      headers: {\n        'Content-Type': 'application/json', 'Accept': 'application/json',\n        ...(pl ? { 'Content-Length': Buffer.byteLength(pl) } : {}),\n        ...(method === 'PATCH' ? { 'If-Match': '*' } : {})\n      }\n    }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve({status:res.statusCode,body:d})); });\n    req.on('error', reject);\n    if (pl) req.write(pl);\n    req.end();\n  });\n}\n\nasync function upsert(keyVal, data) {\n  const r = await bcReq('POST', ENTITY, data);\n  if (r.status === 201 || r.status === 200) return { action:'inserted', key:keyVal, status:r.status };\n  const isConflict = r.status===409 || r.status===422 || (r.status===400 && r.body.includes('EntityWithSameKey'));\n  if (isConflict) {\n    const r2 = await bcReq('PATCH', `${ENTITY}('${encodeURIComponent(keyVal)}')`, data);\n    return { action:'updated', key:keyVal, status:r2.status };\n  }\n  return { action:'error', key:keyVal, status:r.status, detail:r.body.substring(0,200) };\n}\n\nlet staging;\ntry {\n  staging = JSON.parse(fs.readFileSync(STAGING_FILE, 'utf8'));\n} catch(e) {\n  console.log('[WF-08A] Fichier staging absent — aucun client a synchroniser');\n  return [{ json: { table:'etlCustomers', total:0, inserted:0, updated:0, errors:0 } }];\n}\n\nconst rows = staging.data || [];\nif (rows.length === 0) {\n  return [{ json: { table:'etlCustomers', total:0, inserted:0, updated:0, errors:0 } }];\n}\n\nconst results = [];\nfor (const row of rows) {\n  const r = await upsert(row.customer_id, {\n    customerId:      row.customer_id      || '',\n    name:            row.name             || '',\n    country:         row.country          || '',\n    postCode:        row.post_code        || '',\n    locationCode:    row.location_code    || '',\n    currencyCode:    row.currency_code    || '',\n    salespersonCode: row.salesperson_code || '',\n    etlLoadedAt:     NOW\n  });\n  results.push(r);\n}\nconst inserted = results.filter(r=>r.action==='inserted').length;\nconst updated  = results.filter(r=>r.action==='updated').length;\nconst errors   = results.filter(r=>r.action==='error').length;\nconsole.log(`[WF-08A] clients JSON -> BC: ${inserted} inserts | ${updated} updates | ${errors} errors`);\nreturn [{ json: { table:'etlCustomers', total:results.length, inserted, updated, errors } }];"
       }
     }
   ],
   "connections": {
     "Déclencheur sous-workflow": {
-      "main": [[{ "node": "Sync dim_customers → BC", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Sync clients → BC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": { "executionOrder": "v1" },
-  "staticData": null, "meta": null, "pinData": {},
-  "versionId": "a1b2c3d4-0008-000a-b001-000000000001",
-  "activeVersionId": "a1b2c3d4-0008-000a-b001-000000000001",
-  "tags": [{ "name": "gold" }, { "name": "business-central" }, { "name": "sous-workflow" }]
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "a1b2c3d4-0008-000a-b003-000000000001",
+  "activeVersionId": null,
+  "versionCounter": 3,
+  "triggerCount": 0,
+  "tags": [
+    {
+      "name": "business-central"
+    },
+    {
+      "name": "sous-workflow"
+    },
+    {
+      "name": "json-direct"
+    }
+  ]
 }
