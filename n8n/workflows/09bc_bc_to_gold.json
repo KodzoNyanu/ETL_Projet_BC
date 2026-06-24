@@ -1,0 +1,96 @@
+{
+  "id": "wf09bc-bc-to-gold-v1",
+  "name": "09BC - Sync BC → Gold PostgreSQL",
+  "active": true,
+  "nodes": [
+    {
+      "id": "wf09bc-webhook-001",
+      "name": "Webhook BC → Gold",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        100,
+        360
+      ],
+      "webhookId": "bc-to-gold",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "bc-to-gold",
+        "responseMode": "onReceived",
+        "options": {
+          "responseData": "{\"status\":\"BC → Gold sync lancée\"}",
+          "responseCode": 200
+        }
+      }
+    },
+    {
+      "id": "wf09bc-trigger-001",
+      "name": "Déclencheur sous-workflow",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1,
+      "position": [
+        100,
+        520
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "wf09bc-code-001",
+      "name": "Extraire BC → Gold",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        360
+      ],
+      "parameters": {
+        "jsCode": "const http = require('http');\nconst { Client } = require('pg');\n\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = 'e6317465-9a3f-f011-be59-6045bde988e7';\nconst PG = { host: '172.18.0.4', port: 5432, database: 'data_warehouse_gold', user: 'nyanu', password: 'nyanu', connectionTimeoutMillis: 10000 };\n\nfunction s(v, max) { return (v||'').toString().substring(0, max); }\n\nfunction bcGet(entity, top = 5000) {\n  return new Promise((resolve, reject) => {\n    const path = `${BASE}/companies(${COMPANY})/${entity}?$top=${top}`;\n    const req = http.request({ hostname: PROXY, port: PORT, path, method: 'GET', headers: { 'Accept': 'application/json' } }, res => {\n      let d = '';\n      res.on('data', c => d += c);\n      res.on('end', () => {\n        if (res.statusCode >= 400) reject(new Error(`BC ${entity}: HTTP ${res.statusCode}`));\n        else { try { resolve(JSON.parse(d).value || []); } catch(e) { reject(new Error('Parse error: ' + d.substring(0,100))); } }\n      });\n    });\n    req.setTimeout(120000, () => { req.destroy(); reject(new Error('Timeout 120s')); });\n    req.on('error', reject);\n    req.end();\n  });\n}\n\nconst pg = new Client(PG);\nawait pg.connect();\nconst results = {};\nconst errors  = {};\n\ntry {\n  // ── 1. Customers ──────────────────────────────────────────\n  const customers = await bcGet('etlCustomers');\n  let cErr = 0;\n  for (const r of customers) {\n    try {\n      await pg.query(\n        `INSERT INTO bc_gold.customers (customer_id,name,country,post_code,location_code,currency_code,salesperson_code,extracted_at)\n         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())\n         ON CONFLICT (customer_id) DO UPDATE SET name=$2,country=$3,post_code=$4,location_code=$5,currency_code=$6,salesperson_code=$7,extracted_at=NOW()`,\n        [s(r.customerId,50), s(r.name,200), s(r.country,100), s(r.postCode,20),\n         s(r.locationCode,50), s(r.currencyCode,20), s(r.salespersonCode,50)]\n      );\n    } catch(e) { cErr++; console.error('[WF-09BC] ERR customers', r.customerId, e.message.substring(0,80)); }\n  }\n  results.customers = customers.length - cErr; errors.customers = cErr;\n\n  // ── 2. Articles ────────────────────────────────────────────\n  const articles = await bcGet('etlArticles');\n  let aErr = 0;\n  for (const r of articles) {\n    try {\n      await pg.query(\n        `INSERT INTO bc_gold.articles (article_id,description,unit_price,uom_code,item_category,extracted_at)\n         VALUES ($1,$2,$3,$4,$5,NOW())\n         ON CONFLICT (article_id) DO UPDATE SET description=$2,unit_price=$3,uom_code=$4,item_category=$5,extracted_at=NOW()`,\n        [s(r.articleId,50), s(r.description,300), parseFloat(r.unitPrice||0), s(r.unitOfMeasure,50), s(r.itemCategory,200)]\n      );\n    } catch(e) { aErr++; console.error('[WF-09BC] ERR articles', r.articleId, e.message.substring(0,80)); }\n  }\n  results.articles = articles.length - aErr; errors.articles = aErr;\n\n  // ── 3. Shipment Headers ────────────────────────────────────\n  const headers = await bcGet('etlShipmentHeaders', 500);\n  let hErr = 0;\n  for (const r of headers) {\n    try {\n      await pg.query(\n        `INSERT INTO bc_gold.shipment_headers (document_no,customer_id,shipment_date,location_code,status,extracted_at)\n         VALUES ($1,$2,$3,$4,$5,NOW())\n         ON CONFLICT (document_no) DO UPDATE SET customer_id=$2,shipment_date=$3,location_code=$4,status=$5,extracted_at=NOW()`,\n        [s(r.headerId,50), s(r.customerNo,50),\n         r.shipmentDate && r.shipmentDate !== '0001-01-01' ? r.shipmentDate : null,\n         s(r.shipToCity,200), s(r.shipToCountry,10)]\n      );\n    } catch(e) { hErr++; console.error('[WF-09BC] ERR headers', r.headerId, e.message.substring(0,80)); }\n  }\n  results.shipment_headers = headers.length - hErr; errors.shipment_headers = hErr;\n\n  // ── 4. Shipment Lines ──────────────────────────────────────\n  const lines = await bcGet('etlShipmentLines', 2000);\n  let lErr = 0;\n  for (const r of lines) {\n    try {\n      await pg.query(\n        `INSERT INTO bc_gold.shipment_lines (document_no,line_no,article_id,quantity,uom_code,gross_weight,net_weight,unit_volume,location_code,shipment_date,extracted_at)\n         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())\n         ON CONFLICT (document_no,line_no) DO UPDATE SET article_id=$3,quantity=$4,uom_code=$5,gross_weight=$6,net_weight=$7,unit_volume=$8,location_code=$9,shipment_date=$10,extracted_at=NOW()`,\n        [s(r.documentNo,50), parseInt(r.lineNo||0), s(r.articleId,50),\n         parseFloat(r.quantity||0), s(r.uomCode,50),\n         parseFloat(r.grossWeight||0), parseFloat(r.netWeight||0), parseFloat(r.unitVolume||0),\n         s(r.locationCode,50), r.shipmentDate||null]\n      );\n    } catch(e) { lErr++; console.error('[WF-09BC] ERR shiplines', r.documentNo, e.message.substring(0,80)); }\n  }\n  results.shipment_lines = lines.length - lErr; errors.shipment_lines = lErr;\n\n  // ── 5. Distances ───────────────────────────────────────────\n  const distances = await bcGet('etlDistances');\n  let dErr = 0;\n  for (const r of distances) {\n    try {\n      // realSessionDate = champ Text[10] BC (vraie date GPS, hors contrainte licence)\n      const realDate = r.realSessionDate && r.realSessionDate.length === 10 ? r.realSessionDate : null;\n      await pg.query(\n        `INSERT INTO bc_gold.distances (session_id,session_date,real_session_date,total_distance_km,total_distance_meters,max_speed_kmh,avg_speed_kmh,total_active_seconds,event_count,first_event_at,last_event_at,extracted_at)\n         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW())\n         ON CONFLICT (session_id) DO UPDATE SET session_date=$2,real_session_date=$3,total_distance_km=$4,total_distance_meters=$5,max_speed_kmh=$6,avg_speed_kmh=$7,total_active_seconds=$8,event_count=$9,first_event_at=$10,last_event_at=$11,extracted_at=NOW()`,\n        [s(r.sessionId,100),\n         r.sessionDate && r.sessionDate !== '0001-01-01' ? r.sessionDate : null,\n         realDate,\n         parseFloat(r.totalDistanceKm||0), parseFloat(r.totalDistanceMeters||0),\n         parseFloat(r.maxSpeedKmh||0), parseFloat(r.avgSpeedKmh||0),\n         parseInt(r.totalActiveSeconds||0), parseInt(r.eventCount||0),\n         r.firstEventAt||null, r.lastEventAt||null]\n      );\n    } catch(e) { dErr++; console.error('[WF-09BC] ERR distances', r.sessionId, e.message.substring(0,80)); }\n  }\n  results.distances = distances.length - dErr; errors.distances = dErr;\n\n\n  // ── 5b. Backfill vehicle_id depuis staging WF-04B ─────────\n  // BC Table 50201 n'a pas de champ Vehicle Id — on récupère\n  // le vehicle_id depuis le fichier staging accumulé par WF-04B.\n  const fs = require('fs');\n  let stagingVehicles = {};\n  try {\n    const raw = fs.readFileSync('/staging/distances/distances_realtime.json', 'utf8');\n    const staging = JSON.parse(raw);\n    for (const sess of (staging.data || [])) {\n      if (sess.session_id && sess.vehicle_id) {\n        stagingVehicles[sess.session_id] = sess.vehicle_id;\n      }\n    }\n    console.log(`[WF-09BC] Staging chargé: ${Object.keys(stagingVehicles).length} sessions avec vehicle_id`);\n  } catch(e) {\n    console.warn('[WF-09BC] Staging distances non lisible:', e.message);\n  }\n\n  let vUpdated = 0;\n  for (const [sid, vid] of Object.entries(stagingVehicles)) {\n    try {\n      const r = await pg.query(\n        `UPDATE bc_gold.distances SET vehicle_id = $2 WHERE session_id = $1 AND vehicle_id IS NULL`,\n        [sid, vid]\n      );\n      vUpdated += r.rowCount;\n    } catch(e) {\n      console.error('[WF-09BC] ERR backfill vehicle_id', sid, e.message.substring(0, 80));\n    }\n  }\n  if (vUpdated > 0)\n    console.log(`[WF-09BC] ✅ vehicle_id backfillé: ${vUpdated} sessions depuis staging`);\n  results.vehicle_id_backfilled = vUpdated;\n\n  // ── 6. Ecommerce Lines ─────────────────────────────────────\n  const ecom = await bcGet('etlEcommerceLines', 25000);\n  let eErr = 0;\n  for (const r of ecom) {\n    try {\n      await pg.query(\n        `INSERT INTO bc_gold.ecommerce_lines (invoice_no,line_no,customer_id,article_id,quantity,unit_price,total_amount,country,order_date,extracted_at)\n         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())\n         ON CONFLICT (invoice_no,line_no) DO UPDATE SET customer_id=$3,article_id=$4,quantity=$5,unit_price=$6,total_amount=$7,country=$8,order_date=$9,extracted_at=NOW()`,\n        [s(r.invoiceNo,30), parseInt(r.lineNo||0), s(r.customerId,30), s(r.stockCode,50),\n         parseFloat(r.quantity||0), parseFloat(r.unitPrice||0), parseFloat(r.totalAmount||0),\n         s(r.country,2), r.invoiceDate||null]\n      );\n    } catch(e) { eErr++; console.error('[WF-09BC] ERR ecom', r.invoiceNo, r.lineNo, e.message.substring(0,80)); }\n  }\n  results.ecommerce_lines = ecom.length - eErr; errors.ecommerce_lines = eErr;\n\n} finally {\n  await pg.end();\n}\n\nconst total = Object.values(results).reduce((s,v)=>s+v,0);\nconst totalErrors = Object.values(errors).reduce((s,v)=>s+v,0);\nconsole.log(`[WF-09BC] ✅ bc_gold mis à jour: ${JSON.stringify(results)} — total ${total} | erreurs ${totalErrors}`);\nreturn [{ json: { status: totalErrors===0?'success':'partial', ...results, errors, total, extractedAt: new Date().toISOString() } }];\n"
+      }
+    }
+  ],
+  "connections": {
+    "Webhook BC → Gold": {
+      "main": [
+        [
+          {
+            "node": "Extraire BC → Gold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Déclencheur sous-workflow": {
+      "main": [
+        [
+          {
+            "node": "Extraire BC → Gold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "a1b2c3d4-0009-00bc-b004-000000000001",
+  "activeVersionId": "a1b2c3d4-0009-00bc-b004-000000000001",
+  "versionCounter": 5,
+  "triggerCount": 1,
+  "tags": [
+    {
+      "name": "business-central"
+    },
+    {
+      "name": "gold"
+    },
+    {
+      "name": "etl-projet-bc"
+    }
+  ]
+}

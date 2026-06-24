@@ -1,6 +1,6 @@
 {
   "id": "wf08d-sync-distances-v1",
-  "name": "08D - Sync dim_distances → BC",
+  "name": "08D - Sync distances → BC (JSON direct)",
   "active": true,
   "nodes": [
     {
@@ -8,28 +8,82 @@
       "name": "Déclencheur sous-workflow",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1,
-      "position": [100, 300],
+      "position": [
+        100,
+        300
+      ],
       "parameters": {}
     },
     {
       "id": "code-08d-001",
-      "name": "Sync dim_distances → BC",
+      "name": "Sync distances → BC",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
-      "position": [360, 300],
+      "position": [
+        360,
+        300
+      ],
       "parameters": {
-        "jsCode": "const { Client } = require('pg');\nconst http = require('http');\n\nconst PG      = { host:'172.18.0.4', port:5432, database:'data_warehouse_gold', user:'nyanu', password:'nyanu', connectionTimeoutMillis:10000 };\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = $vars.BC_COMPANY_ID || '00000000-0000-0000-0000-000000000000';\nconst ENTITY  = 'etlDistances';\nconst NOW     = new Date().toISOString();\n\nfunction bcReq(method, path, body) {\n  return new Promise((resolve, reject) => {\n    const pl = body ? JSON.stringify(body) : null;\n    const req = http.request({\n      hostname: PROXY, port: PORT,\n      path: `${BASE}/companies(${COMPANY})/${path}`,\n      method,\n      headers: {\n        'Content-Type': 'application/json', 'Accept': 'application/json',\n        ...(pl ? { 'Content-Length': Buffer.byteLength(pl) } : {}),\n        ...(method === 'PATCH' ? { 'If-Match': '*' } : {})\n      }\n    }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve({status:res.statusCode,body:d})); });\n    req.on('error', reject);\n    if (pl) req.write(pl);\n    req.end();\n  });\n}\n\nasync function upsert(keyVal, data) {\n  const r = await bcReq('POST', ENTITY, data);\n  if (r.status === 201 || r.status === 200) return { action:'inserted', key:keyVal, status:r.status };\n  if (r.status === 409 || r.status === 422) {\n    const r2 = await bcReq('PATCH', `${ENTITY}('${encodeURIComponent(keyVal)}')`, data);\n    return { action:'updated', key:keyVal, status:r2.status };\n  }\n  return { action:'error', key:keyVal, status:r.status, detail:r.body.substring(0,200) };\n}\n\nconst client = new Client(PG);\nawait client.connect();\nconst res = await client.query(`\n  SELECT session_id, session_date,\n         total_distance_km, total_distance_meters,\n         max_speed_kmh, avg_speed_kmh,\n         total_active_seconds, event_count,\n         first_event_at, last_event_at\n  FROM dim_distances\n`);\nawait client.end();\n\nconst results = [];\nfor (const row of res.rows) {\n  const r = await upsert(row.session_id, {\n    sessionId: row.session_id||'',\n    sessionDate: row.session_date ? new Date(row.session_date).toISOString().split('T')[0] : '',\n    totalDistanceKm: parseFloat(row.total_distance_km)||0,\n    totalDistanceMeters: parseFloat(row.total_distance_meters)||0,\n    maxSpeedKmh: parseFloat(row.max_speed_kmh)||0,\n    avgSpeedKmh: parseFloat(row.avg_speed_kmh)||0,\n    totalActiveSeconds: parseInt(row.total_active_seconds)||0,\n    eventCount: parseInt(row.event_count)||0,\n    firstEventAt: row.first_event_at ? new Date(row.first_event_at).toISOString() : '',\n    lastEventAt: row.last_event_at  ? new Date(row.last_event_at).toISOString()  : '',\n    etlLoadedAt: NOW\n  });\n  results.push(r);\n}\nconst inserted = results.filter(r=>r.action==='inserted').length;\nconst updated  = results.filter(r=>r.action==='updated').length;\nconst errors   = results.filter(r=>r.action==='error').length;\nconsole.log(`[WF-08D] dim_distances → BC: ${inserted} inserts | ${updated} updates | ${errors} errors`);\nreturn [{ json: { table:'dim_distances', total:results.length, inserted, updated, errors } }];"
+        "jsCode": "const fs   = require('fs');\nconst http = require('http');\n\nconst STAGING_FILE = '/staging/distances/distances_realtime.json';\nconst PROXY   = '172.18.0.8';\nconst PORT    = 3128;\nconst BASE    = '/BC260/api/etlpipeline/warehouse/v1.0';\nconst COMPANY = 'e6317465-9a3f-f011-be59-6045bde988e7';\nconst ENTITY  = 'etlDistances';\nconst NOW     = new Date().toISOString();\n\n// BC valide les Date fields contre les périodes comptables ouvertes (mois 11,12,01,02 seulement).\n// toAllowedDate remplace les mois hors période par '01' pour éviter l'erreur Internal_DataNotFoundFilter.\n// La vraie date reste dans bc_gold.distances (session_date) et dans le session_id (timestamp ms).\nfunction toAllowedDate(d) {\n  if (!d || d === '0001-01-01') return d;\n  const m = parseInt((d.split('-')[1] || '01'), 10);\n  if ([11,12,1,2].includes(m)) return d;\n  return d.replace(/(-\\d{2}-)/, '-01-');\n}\n\n// If datetime is missing, fall back to sessionDate at midnight UTC\nfunction toDateTime(dt, fallbackDate) {\n  if (dt && dt.trim()) return dt;\n  return (fallbackDate || '2026-01-01') + 'T00:00:00Z';\n}\n\nfunction bcReq(method, path, body) {\n  return new Promise((resolve, reject) => {\n    const pl = body ? JSON.stringify(body) : null;\n    const req = http.request({\n      hostname: PROXY, port: PORT,\n      path: `${BASE}/companies(${COMPANY})/${path}`,\n      method,\n      headers: {\n        'Content-Type': 'application/json', 'Accept': 'application/json',\n        ...(pl ? { 'Content-Length': Buffer.byteLength(pl) } : {}),\n        ...(method === 'PATCH' ? { 'If-Match': '*' } : {})\n      }\n    }, res => { let d=''; res.on('data',c=>d+=c); res.on('end',()=>resolve({status:res.statusCode,body:d})); });\n    req.on('error', reject);\n    if (pl) req.write(pl);\n    req.end();\n  });\n}\n\nasync function upsert(keyVal, data) {\n  const r = await bcReq('POST', ENTITY, data);\n  if (r.status === 201 || r.status === 200) return { action:'inserted', key:keyVal, status:r.status };\n  const isConflict = r.status===409 || r.status===422 || (r.status===400 && r.body.includes('EntityWithSameKey'));\n  if (isConflict) {\n    const r2 = await bcReq('PATCH', `${ENTITY}('${encodeURIComponent(keyVal)}')`, data);\n    return { action:'updated', key:keyVal, status:r2.status };\n  }\n  return { action:'error', key:keyVal, status:r.status, detail:r.body.substring(0,200) };\n}\n\nlet accumulated;\ntry {\n  accumulated = JSON.parse(fs.readFileSync(STAGING_FILE, 'utf8'));\n} catch(e) {\n  console.log('[WF-08D] Fichier staging absent — aucune distance a synchroniser');\n  return [{ json: { table:'etlDistances', total:0, inserted:0, updated:0, errors:0 } }];\n}\n\nconst sessions = accumulated.data || [];\nif (sessions.length === 0) {\n  console.log('[WF-08D] Staging vide — rien a synchroniser');\n  return [{ json: { table:'etlDistances', total:0, inserted:0, updated:0, errors:0 } }];\n}\n\nconst results = [];\nfor (const s of sessions) {\n  const sessionDate = toAllowedDate(s.session_date || '');\n  const r = await upsert(s.session_id, {\n    sessionId:           s.session_id                          || '',\n    sessionDate,\n    totalDistanceKm:     parseFloat(s.total_distance_km)      || 0,\n    totalDistanceMeters: parseFloat(s.total_distance_meters)   || 0,\n    maxSpeedKmh:         parseFloat(s.max_speed_kmh)           || 0,\n    avgSpeedKmh:         parseFloat(s.avg_speed_kmh)           || 0,\n    totalActiveSeconds:  parseInt(s.total_active_seconds)      || 0,\n    eventCount:          parseInt(s.event_count)               || 0,\n    firstEventAt:        toDateTime(s.first_event_at, sessionDate),\n    lastEventAt:         toDateTime(s.last_event_at,  sessionDate),\n    etlLoadedAt:         NOW,\n    realSessionDate:     (s.session_date || '').substring(0, 10)\n  });\n  results.push(r);\n}\n\n\n// ── Backfill vehicle_id → bc_gold.distances ──────────────────\n// BC Table 50201 n'a pas de champ vehicleId, WF-09BC ne peut donc\n// pas le récupérer depuis BC. On écrit vehicle_id directement depuis\n// le staging ici, juste avant que WF-09BC ne synchronise.\nconst { Client } = require('pg');\nconst PG_GOLD = {\n  host: '172.18.0.4', port: 5432,\n  database: 'data_warehouse_gold',\n  user: 'nyanu', password: 'nyanu',\n  connectionTimeoutMillis: 10000\n};\nconst pgGold = new Client(PG_GOLD);\ntry {\n  await pgGold.connect();\n  let vUpdated = 0;\n  for (const s of sessions) {\n    if (!s.vehicle_id) continue;\n    const r = await pgGold.query(\n      `UPDATE bc_gold.distances SET vehicle_id = $2\n       WHERE session_id = $1 AND vehicle_id IS NULL`,\n      [s.session_id, s.vehicle_id]\n    );\n    vUpdated += r.rowCount;\n  }\n  if (vUpdated > 0)\n    console.log(`[WF-08D] ✅ vehicle_id backfillé: ${vUpdated} sessions → bc_gold.distances`);\n} catch(e) {\n  console.warn('[WF-08D] Backfill vehicle_id échoué:', e.message.substring(0, 100));\n} finally {\n  await pgGold.end().catch(() => {});\n}\n\nconst inserted = results.filter(r=>r.action==='inserted').length;\nconst updated  = results.filter(r=>r.action==='updated').length;\nconst errors   = results.filter(r=>r.action==='error').length;\nconsole.log(`[WF-08D] JSON staging -> BC: ${inserted} inserts | ${updated} updates | ${errors} errors`);\nreturn [{ json: { table:'etlDistances', total:results.length, inserted, updated, errors } }];"
+      }
+    },
+    {
+      "id": "exec-09bc-001",
+      "name": "Déclencher WF-09BC → bc_gold",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1,
+      "position": [
+        620,
+        300
+      ],
+      "parameters": {
+        "workflowId": "wf09bc-bc-to-gold-v1",
+        "waitForSubWorkflow": false
       }
     }
   ],
   "connections": {
     "Déclencheur sous-workflow": {
-      "main": [[{ "node": "Sync dim_distances → BC", "type": "main", "index": 0 }]]
+      "main": [
+        [
+          {
+            "node": "Sync distances → BC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync distances → BC": {
+      "main": [
+        [
+          {
+            "node": "Déclencher WF-09BC → bc_gold",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
-  "settings": { "executionOrder": "v1" },
-  "staticData": null, "meta": null, "pinData": {},
-  "versionId": "a1b2c3d4-0008-000d-b001-000000000001",
-  "activeVersionId": "a1b2c3d4-0008-000d-b001-000000000001",
-  "tags": [{ "name": "gold" }, { "name": "business-central" }, { "name": "sous-workflow" }]
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "meta": null,
+  "pinData": {},
+  "versionId": "a1b2c3d4-0008-000d-b005-000000000001",
+  "activeVersionId": "a1b2c3d4-0008-000d-b005-000000000001",
+  "tags": [
+    {
+      "name": "business-central"
+    },
+    {
+      "name": "sous-workflow"
+    },
+    {
+      "name": "json-direct"
+    }
+  ],
+  "versionCounter": 6
 }
